@@ -1,0 +1,195 @@
+---
+title: 'Guided Project: NYC Schools Perceptions"'
+author: 'Michael Hoang'
+date: 'July 7, 2020'
+output: html_notebook
+---
+
+In this project, I will be analyzing [data from the New York City school department](https://www.schools.nyc.gov/) from the year 2011 to understand whether parent, student and teacher perceptions of the quality of NYC schools impact either demographic and/or academic success metrics. Furthermore, I will be seeing if students, teachers and parents have similar perceptions of NYC school quality. 
+
+This data set is [available here](https://data.cityofnewyork.us/Education/2011-NYC-School-Survey/mnz3-dyi8). The already prepared dataset is [available here](https://data.world/dataquest/nyc-schools-data/workspace/file?filename=combined.csv).
+
+```{r}
+
+library(readr)
+library(dplyr)
+library(stringr)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+
+```
+Questions to keep in mind: 
+
+1) Do you have any thoughts on which variables will be important for the analysis
+2) Can any variables be excluded from analysis?
+3) Is there a variable you can use as a key to join the survey data to the combined dataset that is already prepared
+
+```{r}
+
+# importing survey data 
+# PART 1; Combined dataset
+combined = read_csv("C:/Users/micha/Downloads/combined.csv")
+View(combined)
+
+# PART 2: gened file
+survey = read_tsv("C:/Users/micha/Downloads/masterfile11_gened_final.txt")
+View(survey)
+
+# PART 3: d75 file 
+survey_d75 = read_tsv("C:/Users/micha/Downloads/masterfile11_d75_final.txt")
+View(survey_d75)
+
+```
+Naming Conventions for the following fields
+
+dbn = School identification code
+sch_type = school type (elementary, middle, high)
+location = school name 
+enrollment = enrollment size 
+borough = borough
+principal = principal name
+studentsurvey = whether or not this school serves any student in grades 6 to 12
+
+rr_s = student response rate
+rr_t = teacher response rate
+rr_p = parent response rate
+
+N_s = Number of student respondents
+N_t = Number of teacher respondents
+N_p = Number of parent respondents
+
+nr_s = Number of eligible students 
+nr_t = Number of eligible teachers
+nr_p = Number of eligible parents
+
+saf_p_11 = Safety and Respect score based on parent responses (average score; b/t 1-10)
+com_p_11 = Communication score based on parent responses (average score; b/t 1-10)
+eng_p_11 = Engagement score based on parent responses (average score; b/t 1-10)
+aca_p_11 = Academic expectation score based on parent responses(average score; b/t 1-10)
+
+saf_t_11 =  Safety and Respect score based on teacher responses (average score; b/t 1-10)
+com_t_11 = communication score based on teacher responses (average score; b/t 1-10)
+eng_t_11 = Engagement score based on teacher responses (average score; b/t 1-10)
+aca_t_11 = Academic expectation score based on teacher responses (average score; b/t 1-10)
+
+saf_s_11 =  Safety and Respect score based on student responses (average score; b/t 1-10)
+com_s_11 = communication score based on student responses (average score; b/t 1-10)
+eng_s_11 = Engagement score based on student responses (average score; b/t 1-10)
+aca_s_11 = Academic expectation score based on student responses (average score; b/t 1-10)
+
+saf_tot_11 =  Safety and Respect total score (average score; b/t 1-10)
+com_tot_11 = communication total score (average score; b/t 1-10)
+eng_tot_11 = Engagement total score (average score; b/t 1-10)
+aca_tot_11 = Academic expectation total score (average score; b/t 1-10)
+
+NAMING CONVENTION:
+[p/s/t]_q# = Parent/Student/Teacher question on some #
+[p/s/t]_q#[a-z] = Parent/Student/Teacher question on some # at subset (a-to-z)
+[p/s/t]_q#[a-z]_# = Parent/Student/Teacher question on some # at subset (a-to-z) for option #
+[p/s/t]_N_q#_1 = Parent/Student/Teacher question for some # of responses on some # at subset for option #
+
+Looking at each variable, it is corresponding to the score value for each given school for that given group survey response like those pertainign to:
+(a) Safety and Respect
+(b) Communication
+(c) Engagement
+(d) Academic Expectation 
+
+Remembering that we are only interested in High Schools, think about using "FILTER" to exclude all other entries that are not high schools. However, it is important to note that "District 75 Special Education" may refer to either elementary or high schools. 
+
+```{r}
+# SIMPLIFYING THE SURVEY DATASET 
+
+survey_select <- survey %>% 
+  filter(`schooltype` == 'High School') %>% 
+  select(`dbn`:`aca_tot_11`)
+
+View(survey_select) #running this tells us that 383 rows were retained out of the original 1646 rows
+
+survey_d75_select <- survey_d75 %>% 
+  select(`dbn`:`aca_tot_11`)
+
+View(survey_d75_select) # There is a total of 56 rows 
+
+```
+
+Now that I have filtered down the survey dataset to include only High School, we will now proceed to create a signle dataframe for analyzing the data. This is done by combining the survey_select dataset with survey_d75.  
+
+```{r}
+
+survey_d75_select <- survey_select %>% bind_rows(survey_d75)
+
+survey_total <- survey_d75_select %>% rename(`DBN` = `dbn`)
+
+```
+
+Considering that the goal is to retain the information from the combined dataset, we decide to use left join. 
+
+```{r}
+
+combined_survey = combined %>% left_join(survey_d75_select, by = "DBN")
+
+```
+
+Examining variables from survey results to academic success (i.e. Avg SAT Scores) with a correlation matrix. Afterwards we will extract only the variables with a strong correlation. 
+
+```{r}
+
+cor_mat_academic = combined_survey %>% select(avg_sat_score, saf_p_11:aca_tot_11) %>% cor(use = 'pairwise.complete.obs')
+cor_tib_academic = cor_mat_academic %>% as_tibble(rownames = 'survey_variables')
+sat_cors = cor_tib_academic %>% select(survey_variables, avg_sat_score) %>% filter(avg_sat_score < -0.25 | avg_sat_score > 0.25)
+
+create_scatter = function(x, y) {
+  ggplot(data = combined_survey) +
+    aes_string(x = x, y = y) +
+    geom_point(alpha = 0.5) +
+    theme(panel.background =  element_rect('white')) +
+    labs(y = "Average SAT Scores")
+}
+
+x_var = sat_cors$survey_variables[2:5]
+y_var = 'avg_sat_score'
+
+map2(x_var, y_var, create_scatter)
+
+```
+Looking at our findings, it appears that the Safety and Respect scores of Students and Teachers, the total Safety and Respect scores as well as the academic expectation score are positively correlated with SAT Scores. 
+
+```{r}
+
+cor_mat_grad = combined_survey %>% select(grads_percent, saf_p_11:aca_tot_11) %>% cor(use = 'pairwise.complete.obs')
+cor_tib_grad = cor_mat_grad %>% as_tibble(rownames = 'survey_variables')
+grad_cors = cor_tib_grad %>% select(survey_variables, grads_percent) %>% filter(grads_percent < -0.25 | grads_percent > 0.25)
+
+cor_mat_drop = combined_survey %>% select(dropout_percent, saf_p_11:aca_tot_11) %>% cor(use = 'pairwise.complete.obs')
+cor_tib_drop = cor_mat_drop %>% as_tibble(rownames = 'survey_variables')
+drop_cors = cor_tib_drop %>% select(survey_variables, dropout_percent) %>% filter(dropout_percent < -0.25 | dropout_percent > 0.25)
+
+```
+
+Further exploration into graduation and dropout rates, there were no strong correlations between scores for Safety and Respect, Academic Expectation, Communication or Engagement. 
+
+In exploring the perception of student, teachers and parents on the four metrics of school's quality, we have to reshape the data. 
+
+```{r}
+combined_survey_longer <- combined_survey %>% 
+  pivot_longer(cols = saf_p_11:aca_tot_11, names_to = 'survey_question', values_to = 'score')
+
+combined_survey_longer = combined_survey_longer %>% 
+  mutate(response_type = str_sub(survey_question, 4, 6)) %>%
+  mutate(question = str_sub(survey_question, 1, 3))
+
+combined_survey_longer = combined_survey_longer %>%
+  mutate(response_type = ifelse(response_type == "_p_", 'parent',
+                                ifelse(response_type == '_t_', 'teacher', 
+                                       ifelse(response_type == "_s_", 'student',
+                                              ifelse(response_type == "_to_", 'total', NA)))))
+
+combined_survey_longer %>% 
+  filter(response_type != 'total') %>% 
+  ggplot() + aes(x = question, y = score, fill = response_type) + geom_boxplot()
+```
+
+Looking at the findings, it appears as those parents responded to a higher degree of importance to Safety and Respect as well as Communication quality amongst high schools when compared to teachers or students. 
+
+However, interestingly enough, all three cohorts had a similar degree of recognition in the imporance of academic expectation. 
