@@ -1,0 +1,538 @@
+---
+title: 'Guided Project: Finding the Best Markets to Advertise In'
+author: "Michael Hoang"
+date: "19/07/2020"
+output: html_document
+---
+
+Working under the premise that you are working for an e-learning company that offers courses on programming, you are tasked with finding out what sort of market is best to advertise your product in (such as data science or game development). The ultimate goal is to use data collected from an e-learning platform that also offers courses on web development [freeCodeCamp](https://www.freecodecamp.org/). Specifically, this data comes from a survey that fielded questions to new coders regarding their interest in coding called the [2017 New Coder survey](https://www.freecodecamp.org/news/we-asked-20-000-people-who-they-are-and-how-theyre-learning-to-code-fff5d668969/). THe dataset can be found [here](https://github.com/freeCodeCamp/2017-new-coder-survey)
+
+```{r setup, include=FALSE}
+
+# Loading the necessary libraries 
+
+library(tidyr)
+library(purrr)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(tibble)
+library(readr)
+library(aod)
+library(epiR)
+library(Rcpp)
+library(nnet)
+library(car) 
+library(survival) #
+library(survminer)
+library(lmtest)
+library(rms) 
+library(ggfortify) 
+```
+
+STEP 1: Reading the dataset
+
+We will use the 'read_csv" function and use the 'url' parameter to read from link
+
+```{r}
+
+survey <- read.csv(url("https://raw.githubusercontent.com/freeCodeCamp/2017-new-coder-survey/master/clean-data/2017-fCC-New-Coders-Survey-Data.csv"))
+
+View(survey)
+
+```
+
+Looking at the survey, there are over 18000 entries with 136 different columns. However, for our analysis, we want to answer the following:
+
+(1) Where are these new coders located?
+(2) What are the locations with the greatest number of coders?
+(3) How much money new coders are willing to spend on learning?
+
+
+STEP 2: Inspecting the representativity of the sample
+
+We want to be able to determine whether this sample is representative of the population.Looking through our dataset, we see that one of the variables would be a great indicator of representativity of the population, which is "JobRoleInterest" seeing as that most individuals seek out to learn coding as a means of potentially switching/attaining a career in this field. Be awware that there are 13 different job categories that individuals can pick. 
+
+NOTE: There is a Problem: People choose a number of jobs that they are interested in like "Data Scientist, DevOps / SysAdmin, Front-End Web Developer ......". So we need to split each entry and create a frequency table describing the number of options that exists. We need to look further into job interest
+
+
+```{r}
+
+table(survey$JobInterestBackEnd)
+table(survey$JobInterestDataEngr)
+table(survey$JobInterestDataSci)
+table(survey$JobInterestDevOps)
+table(survey$JobInterestFrontEnd)
+table(survey$JobInterestFullStack)
+table(survey$JobInterestGameDev)
+table(survey$JobInterestInfoSec)
+table(survey$JobInterestMobile)
+table(survey$JobInterestOther)
+table(survey$JobInterestProjMngr)
+table(survey$JobInterestQAEngr)
+table(survey$JobInterestUX)
+
+```
+
+Looking at our dataset, we see that the most popular programming job of interest is web developer (i.e. back-end, front-end and full stack development), data scientist/engineer, mobile/game developer, UX designer. Considering the popularity of these fields relative to the rest, we will look further to see what sort of job role interest is popular Assuming that the NA correspond to not having chosen this as part of a response (again not practice as there is no way to truly determine this unless otherwise specified in the survey), the value of "1" will have correspond to a "Yes" response. 
+
+NOTE: Looking at this, we can see is that there are a number of whitespace found between options. We may need to remove them for a more accurate count. 
+
+```{r}
+
+survey$JobRoleInterest = trimws(survey$JobRoleInterest)
+
+survey.1.2 <- survey %>% 
+  select(JobInterestBackEnd, JobInterestDataEngr, JobInterestDataSci, JobInterestDevOps, JobInterestFrontEnd, JobInterestFullStack, JobInterestGameDev, JobInterestInfoSec, JobInterestMobile, JobInterestOther, JobInterestProjMngr, JobRoleInterest) %>% 
+  filter(!is.na(JobRoleInterest))
+
+job_test.1 <- table(survey.1.2$JobRoleInterest)
+View(job_test.1)
+
+```
+
+Looking at the various roles that were listed, we can see that the main job of interest include the following: 'Back-End Web Developer', 'Data Scientist', 'Data Engineer', 'Front-End Web Developer', 'Full-Stack Web Developer', 'DevOps / SysAdmin','User Experience Designer','Mobile Developer', 'Game Developer', 'Information Security', 'Product Manager','Software Engineer'
+
+```{r}
+
+pattern_web_dev <- "(?i)(Web Developer)" # Accounts for back-end/front-end/full-stack
+pattern_data <- "(?i)Data Scientist | Data Engineer"
+pattern_ux <- "(?i)User Experience Designer"
+pattern_mobile_game <- "(?i)Mobile Developer | Game Developer"
+pattern_extra <- "(?i)DevOps / SysAdmin | Information Security | Product Manager | Software Engineer"
+
+match_1 <- str_detect(survey.1.2$JobRoleInterest, pattern_web_dev)
+match_2 <- str_detect(survey.1.2$JobRoleInterest, pattern_data)
+match_3 <- str_detect(survey.1.2$JobRoleInterest, pattern_ux)
+match_4 <- str_detect(survey.1.2$JobRoleInterest, pattern_mobile_game)
+match_5 <- str_detect(survey.1.2$JobRoleInterest, pattern_extra)
+
+web_dev_match <- if_else(match_1, 'match', 'no match')
+data_match <- if_else(match_2, 'match', 'no match')
+ux_match <- if_else(match_3, 'match', 'no match')
+mobile_game_match = if_else(match_4, 'match', 'no match')
+extra_match = if_else(match_5, 'match', 'no match')
+
+survey.1.2 <- survey.1.2 %>%
+  mutate(web_dev_job = web_dev_match) %>%
+  mutate(data_job = data_match) %>%
+  mutate(ux_job = ux_match) %>%
+  mutate(mobile_game_job = mobile_game_match) %>% 
+  mutate(extra_job = extra_match)
+
+table(match_1) # Pretty much everyone of the new coders want to be in web development 
+table(match_2)
+table(match_3)
+table(match_4)
+table(match_5) # Almost no one wants to be in either a DevOps / SysAdmin, Information Security, Product Manager, Software Engineer
+
+game_mobile_web <- ifelse(c(match_1 == TRUE | match_4 == TRUE), "Game, Mobile or Web Development", "Other Interests")
+survey.1.2$game_mobile_web <- game_mobile_web
+
+freq_table <- survey.1.2 %>% 
+  group_by(game_mobile_web) %>%
+  summarise(Freq = n()) %>%
+  mutate(percentage = Freq/nrow(survey.1.2) * 100)
+
+freq_table$percentage <- as.numeric(freq_table$percentage)
+
+ggplot(data = freq_table, 
+       aes(x = game_mobile_web, y = percentage, fill = game_mobile_web)) + 
+  geom_bar(stat = 'identity') + 
+  theme(legend.position = 'none') + 
+  theme(panel.background = element_rect(fill = 'white')) + 
+  labs(x = 'Job Interests', title = "Programming Job Interests amongst New Coders")
+
+```
+
+Looking at our data, the majority of our new coders would like to pursue a career in game, mobile or web development. In fact, this makes up about 84% of our sample. Although there are a variety of different courses available for different topics, this would be typical for most entering the field of programming, we can say that this is a representative sample of the population. 
+
+
+
+STEP 3: Preping the Data for Answering Questions
+So going back to the three main questions we would like to answer: we primarily want information pertaining to location and the amount of money willing to spend for classes.Our next goal is to reduce the clutterness of the current dataset to include only the necessary information. 
+
+
+```{r}
+fcc <- survey %>% 
+  select(Age,
+         AttendedBootcamp,
+         CityPopulation,
+         CountryCitizen,
+         CountryLive,
+         EmploymentField,
+         EmploymentFieldOther, 
+         EmploymentStatus,
+         EmploymentStatusOther,
+         ExpectedEarning,
+         Gender, 
+         GenderOther,
+         HasChildren,
+         HasDebt,
+         HasFinancialDependents,
+         HasHomeMortgage,
+         HasStudentDebt,
+         HoursLearning,
+         Income,
+         IsEthnicMinority,
+         JobApplyWhen,
+         JobInterestBackEnd,
+         JobInterestDataEngr,
+         JobInterestDataSci,
+         JobInterestDevOps,
+         JobInterestFrontEnd,
+         JobInterestFullStack,
+         JobInterestGameDev,
+         JobInterestInfoSec,
+         JobInterestMobile,
+         JobInterestOther,
+         JobInterestProjMngr,
+         JobInterestQAEngr,
+         JobInterestUX,
+         JobPref,
+         JobRoleInterest,
+         LanguageAtHome,
+         MaritalStatus,
+         MoneyForLearning,
+         MonthsProgramming,
+         SchoolDegree,
+         SchoolMajor)
+
+
+View(fcc)
+```
+
+STEP 4: Location + Densities
+
+I want to know about the current location of each participant who is learning through FreeCodeCamp. Knowing this, we will use the variable "CountryLive" and create a kind of freq table for identifying the best markets based on num. of potential customers. 
+
+```{r}
+
+freq_country <- fcc %>%
+        group_by(CountryLive) %>% 
+        drop_na(CountryLive) %>%
+        summarise(abs_freq = n(),
+                  percent = n()/nrow(fcc) * 100) %>%
+        arrange(desc(percent))
+
+```
+
+Looking at our data, it appears that the majority of the new coders in this survey stem largely from USA (~32%) followed by India (7.7%) then the United Kingdom (~4.2%) and Canada (~3.4%). Based on this finding, it is suggested that the US and India may be the best markets to advertise our products to. However, we need to examine further to get a more concrete idea.
+
+
+
+STEP 5: Spending Money for Learning
+
+Using the "MoneyForLearning" column (in USD), we want to get an idea of how much money coders are willing to spend. Currently, the price is at $59/month for our subscription service. However, we want to know how much in total are these new coders are spending. Considering that our 4 major national markets appear to be in the US, India, UK and Canada, we would like to focus our analysis within these area. 
+
+NOTE: the "MoneyForLearning" column refers to the TOTAL AMOUNT SPENT. If you need the amount per month, need to divide it by the variable "MonthsProgramming". 
+
+```{r}
+top_4 <- fcc %>%
+  drop_na(MoneyForLearning, MonthsProgramming) %>% 
+  filter(CountryLive == "United States of America" | CountryLive == "India" | CountryLive == "United Kingdom" | CountryLive == "Canada")
+  
+```
+
+Looking at the dataset, we see to see that some folks have spent less than 1 month in programming as evident by these individual noting 100s to 1000s of dollars spent. Again working on the assumption that NULL corresponds to the negative or absense of occurence and that 0 corresponding to less than 1 month, we will need to modify the values to 1 
+
+
+```{r}
+
+top_4 <- top_4 %>% 
+  mutate(MonthsProgramming = replace(MonthsProgramming, MonthsProgramming == 0, 1), 
+         MoneyPerMonth = round(MoneyForLearning / MonthsProgramming, 2))
+
+# Arriving out a finalized amount for each of these individuals, we want to now look at the typical amount of money spent within each country. So let's look at this. 
+
+money_table = top_4 %>% 
+    drop_na(CountryLive, MoneyForLearning, MonthsProgramming, MoneyPerMonth) %>%
+    select(CountryLive, MoneyForLearning, MonthsProgramming, MoneyPerMonth) %>% 
+    group_by(CountryLive) %>%
+    summarise(mean = mean(MoneyPerMonth), count = n()) %>%
+    arrange(desc(mean))
+
+```
+
+Based on the findings, we see that (on average) the US and Canada spent the most money per given month for courses on programming at $206 and $118 per month respectively. Considering the metrics relating to socioeconomics within these two nations (primarily [GDP](https://en.wikipedia.org/wiki/List_of_countries_by_GDP_(nominal)_per_capita)),we would expect this to be the case. 
+
+
+
+STEP 6: Examining extreme values
+
+It is entirely possible to have extreme outliers in our data that may shift the actual mean value. This is evident when we consider adding the median values in our previous table. 
+
+```{r}
+
+money_tableII = top_4 %>% 
+  drop_na(CountryLive, MoneyForLearning, MonthsProgramming, MoneyPerMonth) %>%
+  select(CountryLive, MoneyForLearning, MonthsProgramming, MoneyPerMonth) %>% 
+  group_by(CountryLive) %>%
+  summarise(mean = mean(MoneyPerMonth), median = median(MoneyPerMonth), count= n()) %>%
+  arrange(desc(mean))
+
+```
+
+Observing the discrepancy b/t the median and mean values of MoneyPerMonth leads me to think that there may be outliers in our data. So lets see.
+
+```{r}
+
+ggplot(data = top_4,
+       aes(x = CountryLive, y = MoneyPerMonth, fill = CountryLive)) +
+  geom_boxplot() +
+  xlab("Country") +
+  ylab("Amount Spent Learning Coding per Month (USD)") +
+  theme(legend.position = 'none') + 
+  theme(panel.background = element_rect(fill = 'white'))
+
+```
+
+Looking at each nation, there appears to be a degree of great degree of variability in amount spent per month. Most notably will be the US as it seems to show some individual spent in excess of $50,000 per month on courses. Lets take a closer look at each country. 
+
+```{r}
+
+only_india <- top_4 %>% 
+  filter(CountryLive == "India")
+
+only_us <- top_4 %>%
+  filter(CountryLive == "United States of America")
+
+only_can <- top_4 %>%
+  filter(CountryLive == 'Canada')
+
+only_uk <- top_4 %>%
+  filter(CountryLive == "United Kingdom")
+
+ggplot(data = only_india,
+       aes(x = CountryLive, y = MoneyPerMonth)) + 
+  geom_boxplot() + 
+  ylab("Amount Spent Learning Coding per Month (USD)") +
+  theme_bw()
+
+ggplot(data = only_us,
+       aes(x = CountryLive, y = MoneyPerMonth)) + 
+  geom_boxplot() + 
+  ylab("Amount Spent Learning Coding per Month (USD)") +
+  theme_bw()
+
+ggplot(data = only_can,
+       aes(x = CountryLive, y = MoneyPerMonth)) + 
+  geom_boxplot() + 
+  ylab("Amount Spent Learning Coding per Month (USD)") +
+  theme_bw()
+
+ggplot(data = only_uk,
+       aes(x = CountryLive, y = MoneyPerMonth)) + 
+  geom_boxplot() + 
+  ylab("Amount Spent Learning Coding per Month (USD)") +
+  theme_bw()
+
+
+```
+
+Examining closely at the spread within each country, we can see the following:
+
+FOR INDIA: it appears the that majority of the individuals spent under 1250 per month in learning programming, with one spending $10K per month 
+
+FOR US: the vast majority appeared to have spent less than $20K per month on coding with two spending $60K +
+
+FOR CANADA: there is a more tight spread of expenditure which capped at $5K per month with a majority spending less than 1.5K a month 
+
+FOR UK: There is an even lower expenditure compared to the previous three with the vast majority spending less than 1K. 
+
+Further examination is needed to examine these outliers. Based on the spread, we will establish outliers for each country as the following: US = $10K, India = $1250, Canada = $1000, UK = $1000
+
+```{r}
+
+us_only = survey %>%
+  drop_na(MoneyForLearning, MonthsProgramming) %>% 
+  filter(CountryLive == "United States of America") %>% 
+  mutate(MonthsProgramming = replace(MonthsProgramming, MonthsProgramming == 0, 1), 
+         MoneyPerMonth = round(MoneyForLearning / MonthsProgramming, 2))
+
+uk_only = survey %>%
+  drop_na(MoneyForLearning, MonthsProgramming) %>% 
+  filter(CountryLive == "United Kingdom") %>% 
+  mutate(MonthsProgramming = replace(MonthsProgramming, MonthsProgramming == 0, 1), 
+         MoneyPerMonth = round(MoneyForLearning / MonthsProgramming, 2))
+
+canada_only = survey %>%
+  drop_na(MoneyForLearning, MonthsProgramming) %>% 
+  filter(CountryLive == "Canada") %>% 
+  mutate(MonthsProgramming = replace(MonthsProgramming, MonthsProgramming == 0, 1), 
+         MoneyPerMonth = round(MoneyForLearning / MonthsProgramming, 2))
+
+india_only = survey %>%
+  drop_na(MoneyForLearning, MonthsProgramming) %>% 
+  filter(CountryLive == "India") %>% 
+  mutate(MonthsProgramming = replace(MonthsProgramming, MonthsProgramming == 0, 1), 
+         MoneyPerMonth = round(MoneyForLearning / MonthsProgramming, 2))
+
+us_outlier = us_only %>% 
+  filter(MoneyPerMonth >= 10000) %>%
+  arrange(desc(MoneyPerMonth))
+
+uk_outlier = uk_only %>% 
+  filter(MoneyPerMonth >= 1000) %>%
+  arrange(desc(MoneyPerMonth))
+
+canada_outlier = canada_only %>% 
+  filter(MoneyPerMonth >= 1000) %>%
+  arrange(desc(MoneyPerMonth))
+
+india_outlier = india_only %>% 
+  filter(MoneyPerMonth >= 1250)%>%
+  arrange(desc(MoneyPerMonth))
+
+```
+
+Examining the US outliers:
+  - Age: 19-50 (avg: 33-34), 
+  - > 50% male, 
+  - majority having debt of some kind, 
+  - few attended bootcamp (3/12), 
+  - expecting earning to be $65K/year, 
+  - hours spent learning range from 1 - 50 hrs (avg: 24), 
+  - majority are within 12 months of programming experience, 
+  - 2/3rd are college graduates (i.e. associate's degree or greater), but the majority are not currently employed (9/12). 
+
+Based on these findings, it can be surmised that the these outliers likely stem from individuals pursuing a career change possibly as older students given the age range, programming hisory and previous academic history. This likely may stem from having taken education from higher institution which does have a greater fees compared to some bootcamps or other resourses. 
+
+
+Examining the India outliers:
+ -Age 19-38 (avg: 24-25), 
+ - all male, 
+ - < 50% have debt (5/13), 
+ - with almost none having attended bootcamp 
+ - expecting earning to be $100K/year
+ - hours spent learning range from 1 - 80 hrs (avg: 28), 
+ - the majority are within 12 months of programming experience,
+ - nearly all have bachelor's degrees (notably in computer science), but the majority are unemployed (7/12)
+
+Based on these findings, it can be surmised that these outliers likely stem from young adult individuals having just completed or almost completing their studies (likely in the field of computer sciences) at a hgiher educational institution and are looking to break into the field of programming. It is interesting to note that the fact that the majority did not have any notable debt seems to indicate that these individuals may have come from a high-income household. 
+
+
+Examining the UK outliers:
+ - Age: 23-49 (avg: 33-34), 
+ - majority are male (> 50%), 
+ - 2/3rd possess some form of debt and the majority also attended some form of bootcamp, 
+ - expected earning appears to average out to 36K
+ - hours spent learning range from 5 - 50 hours (avg: 22 hrs), 
+ - almost all have less than 12 months of programming experience. 
+ - 2/3rd are college graduates with the majority being currently employed. 
+
+Based on these findings, it can be surmised that these outliers are likely older adult that have completed a sort of bootcamp (which would explain the high cost). It is likely that these individuals are learning largely on their own based on their employment status and are possibly looking to either shift careers or expand their current knowledge base
+
+
+Examining Canada outliers:
+ - Age: 18-49 (avg: 29), 
+ - majority are female, 
+ - around 50% possess some form of debt with the vast majority having attended some form of bootcamp, 
+ - expected earning is $47250 / year
+ - Hours spend learning range from 2-60 hours (avg: 17 - 18 hrs), 
+ - majority with less than 12 months of programming experience. 
+ - The vast majority are college graduates with the majority being currently employed.
+
+Based on these findings, we can see that these outliers are likely working adults that have attended some sort of bootcamp and are looking to either shift careers or expand their current knowledge base based on their current income 
+
+
+Considering our findings, the potential for the large sums of money being paid upfront may have disproportionately impacted true monthly expenditure. Thus we will go ahead and process the removal of these outliers who had (1) attended bootcamp or (2) in all likelihood may have attended university
+
+```{r}
+
+# PART A: 
+fcc_good = survey %>%
+  drop_na(MoneyForLearning, MonthsProgramming) %>% 
+  filter(CountryLive == "United States of America" | CountryLive == "India" | CountryLive == "United Kingdom" | CountryLive == "Canada") %>%
+  mutate(index = row_number(), 
+         MonthsProgramming = replace(MonthsProgramming, MonthsProgramming == 0, 1), 
+         MoneyPerMonth = round(MoneyForLearning / MonthsProgramming, 2))
+
+# Num of rows = 7968
+
+# PART B:
+# We will be establishing the following amounts as outlier cut-offs:
+# India at $1250, US at $6000, Canada at $1000, UK at $1000
+# Furthermore, we will removed those that did not attend bootcamp (likely is the case for both Canada, UK and US)
+# Furthermore, we will removed individuals that had programming experience that is less than 3 months or less
+
+odd_us = fcc_good %>%
+  filter(CountryLive == 'United States of America' & 
+           MoneyPerMonth >= 6000 & 
+           (AttendedBootcamp == 0 | MonthsProgramming <= 3)) %>%
+  arrange(desc(MoneyPerMonth))
+
+odd_ind = fcc_good %>%
+  filter(CountryLive == 'India' & MoneyPerMonth >= 1250) %>%
+  arrange(desc(MoneyPerMonth))
+
+odd_can = fcc_good %>%
+  filter(CountryLive == 'Canada' & MoneyPerMonth >= 1000 & (AttendedBootcamp == 0 | MonthsProgramming <= 3)) %>%
+  arrange(desc(MoneyPerMonth))
+  
+odd_uk = fcc_good %>%
+  filter(CountryLive == 'United Kingdom' & MoneyPerMonth >= 1000 & (AttendedBootcamp == 0 | MonthsProgramming <= 3)) %>%
+  arrange(desc(MoneyPerMonth))
+
+# PART C: 
+# Filtering out these outliers from the dataset 
+
+fcc_good <- fcc_good %>%
+  filter(!(index %in% odd_us$index))
+
+fcc_good <- fcc_good %>%
+  filter(!(index %in% odd_ind$index))
+
+fcc_good <- fcc_good %>%
+  filter(!(index %in% odd_uk$index))
+
+fcc_good <- fcc_good %>%
+  filter(!(index %in% odd_can$index))
+
+
+# PART D: Reexamine the amount spent
+
+top_4_ver.2 = fcc_good %>% 
+  group_by(CountryLive) %>% 
+  summarise(mean = mean(MoneyPerMonth), 
+            median = median(MoneyPerMonth), 
+            count = n()) %>%
+  arrange(desc(mean))
+
+money_tableIII = fcc_good %>% 
+  group_by(CountryLive) %>% 
+  summarise(mean = mean(MoneyPerMonth)) %>%
+  arrange(desc(mean))
+
+```
+
+After removing the outliers, we ended up seeing that the amount spent, we end up getting the following amounts: 
+ - US = $133 / month
+ - Canada = $92.70 / month
+ - UK = $43.60 / month
+ - India = $30.10 / month 
+ 
+```{r}
+
+ggplot(data = fcc_good, 
+       aes(x = CountryLive, y = MoneyPerMonth)) + 
+  geom_boxplot() + 
+  ylab("Amount spent per month (USD)") + 
+  xlab('Top 4 Countries (based on location of users)')
+  theme_bw()
+
+```
+
+STEP 7: Determining the two best markets
+
+Based on the previous findings, we can surmise that the US is one of the two best markets to advertise. However, we need to determine the 2nd market. Based on our findings, it would likely be Canada with the 2nd highest amount spent. There needs to be consideration towards the number of individuals within the given market. 
+
+  1) One possibility may be to use a weighted split attention of our advertising budgets with an emphasis to the US and a smaller split b/t Canada, UK and India. 
+
+  2) Another survey may be needed to be sent out b/t the 3 other countries in order to get a more definitive conclusion if the pursuit is still to focus on the other 3 countries. 
+  
+
+
+CONCLUSION
+
+With this data set, we analysed urvey data from new coders to find the best two markets to advertise in. Our findings have concluded that the US would be one of the markets to advertise in. However there is some concerns as to whether spend our budget towards advertising in Canada, India or the UK. While a second survey sent out focusing on these three countries would be beneficial to get a conclusive answer, we may alternatively try to split the remaining budget unequivocally b/t these nations with a heavier emphasis towards either India or Canada. 
