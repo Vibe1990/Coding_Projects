@@ -1,0 +1,1750 @@
+---
+title: "Winning Jeopardy"
+author: "Michael Hoang"
+date: "11/08/2020"
+output: html_document
+---
+
+STEP 1: Reading the CSV File
+
+PART A: Reading data set into RStudio
+
+NOTE: I only got a hold of the 200,000+ data set [found here](https://www.reddit.com/r/datasets/comments/1uyd0t/200000_jeopardy_questions_in_a_json_file/). Knowing that if I need to run some kind of for loop at some point, it'll take forever to run these bits of code. So I will need to create a smaller random sample of about 20,000 rows. 
+
+
+```{r}
+library(tidyverse)
+
+set.seed(1)
+
+raw <- read.csv("C:/Users/micha/Downloads/JEOPARDY_CSV.csv") 
+
+attach(raw)
+
+```
+
+PART B: Creating a random subset of the original dataset
+
+```{r}
+raw = tibble::rowid_to_column(raw, "id") # Need to add an ID column 
+chosen = sample(unique(raw$id), 20000) # Needed to create a random subset of the larger dataset for analysis
+jeopardy = raw %>% filter(id %in% chosen) 
+jeopardy = jeopardy[-c(1)] # Getting rid of that ID column 
+View(jeopardy)
+
+```
+
+PART C: Prelim analysis + modification of sample dataset
+
+```{r }
+head(jeopardy, 5) 
+tail(jeopardy, 5) 
+colnames(jeopardy) = c('show_number', 'air_date', 'round', 'category', 'value', 'question', 'answer')
+dim(jeopardy)
+sapply(jeopardy, class)
+```
+
+
+STEP 2: Fixing data types
+
+```{r}
+unique(jeopardy$value)  # see that they are a wrong class (character) b/c of the "$" and "," along with the use of "None" 
+
+jeopardy = jeopardy %>% 
+  filter(value != "None")
+
+View(jeopardy) # left with like 19617
+
+jeopardy = jeopardy %>% 
+  mutate(value = str_replace_all(value, "[$,]", ""), 
+         value = as.numeric(value)
+  )
+
+View(jeopardy)	
+sapply(jeopardy, class)
+```
+
+STEP 3: Normalizing Text
+
+Make is so that all the text found in the Question, Answer + Category column to be lowercase and no punctuation. 
+
+```{r}
+jeopardy = jeopardy %>% 
+  mutate(question = tolower(question),
+         question = str_replace_all(question, "[^A-Za-z0-9 ]", "")) %>%
+  mutate(answer = tolower(answer),
+         answer = str_replace_all(answer, "[^A-Za-z0-9 ]", "")) %>%
+  mutate(category = tolower(category),
+         category = str_replace_all(category, "[^A-Za-z0-9 ]", ""))
+```
+
+STEP 4: Making Dates More Accessible (i.e. split it up and make it numeric)
+
+```{r}
+library(dplyr)
+
+jeopardy = jeopardy %>% 
+  separate(air_date, c('year', 'month', 'day'), sep = '-') %>% 
+  mutate(year = as.numeric(year), month = as.numeric(month), day = as.numeric(day))
+
+sapply(jeopardy, class)
+
+jeopardy = jeopardy[order(jeopardy$year, jeopardy$month, jeopardy$day),]# sorting by date in ascending order 
+
+View(jeopardy)
+```
+
+STEP 5: Focusing on particular subject areas
+
+To assess whether there is a propensity for certain categories to be more prevalent than others (mainly science, history and/or shakespeare). Assuming there is no such category that would stand out, we would expect that the probability of a random criteria is 1/3369 (3369 = total num of unique categories)
+
+```{r}
+n_questions <- nrow(jeopardy)
+p_category_expected <- 1/3369
+p_not_category_expected <- 3368/3369
+p_expected <- c(p_category_expected, p_not_category_expected)
+
+count_science = 0
+
+for (c in jeopardy$category) {
+  if ('science' %in% c) {
+    count_science = count_science + 1	
+  }
+}
+
+science_observed = c(count_science, n_questions - count_science)
+
+count_history = 0
+
+for (c in jeopardy$category) {
+  if ('history' %in% c) {
+    count_history = count_history + 1
+  }
+}
+
+history_observed = c(count_history, n_questions - count_history)
+
+count_shakespeare = 0
+
+for (c in jeopardy$category) {
+  if ('shakespeare' %in% c) {
+    count_shakespeare = count_shakespeare + 1
+  }
+}
+
+shakespeare_observed = c(count_shakespeare, n_questions - count_shakespeare)
+
+
+chisq.test(science_observed, p = p_expected) 
+chisq.test(history_observed, p = p_expected)
+chisq.test(shakespeare_observed, p = p_expected)
+```
+
+Based on these findings, we find that we will reject the null hypothesis that there is no difference in the probability of picking a particular category
+
+
+
+STEP 6: Unique Terms in Questions
+
+(Please note) I'm presenting two solutions to this problem. Both are correct, but one method will be like watching paint dry and the other method, you will thank me for. 
+
+```{r}
+# OPTION 1: nested for loops 
+
+terms_used <- character(0)
+questions <- pull(jeopardy, question)
+
+for (quest in questions) {
+  split_question <- str_split(quest, " ")[[1]]
+  
+  for (word in split_question) {
+    if (!word %in% terms_used & nchar(word) >= 6) {
+      terms_used <- c(terms_used, word)
+    }
+  }
+}
+
+View(terms_used) # Took about 1 min to run 
+```
+
+While running this with a smaller sample of 20000 is not that big of a deal, a 200000+ original dataset will take forever. This is due to the nature of going line-by-line with for loops.
+
+So, you will need a faster method to run this. This better option to run is to create a function that does exactly what the top portion does, but use lapply instead of a series of nested for loops. See this below: 
+
+```{r}
+# OPTION 2: Create a function and lapply 
+  
+questions <- jeopardy$question
+
+term_used = list()
+
+criteria = function(character) {
+  holder = list()
+  for (c in character) {
+    words = str_split(c, " ")[[1]]
+    
+    for (word in words) {
+      if (!word %in% holder & nchar(word) >= 6 ) {
+        holder = c(holder, word)
+      }
+    }
+  }
+  return(holder)
+} 
+
+
+placeholder = lapply(questions, criteria)
+placeholder.a = unlist(placeholder)
+placeholder.a = unique(placeholder.a)
+
+for (p in placeholder.a) {
+  
+  term_used = c(term_used, p)
+  
+}
+
+View(term_used) # This took 10 secs to run 
+```
+  
+EXTRA STUFF # 1: 
+
+Ok, so by just using 6 letters as a cut-off, we would be missing out on more vital information that could be useful in figuring out which themes would be best to focus our attention on to maximize Jeopardy winnings.The original intention with this is to eliminate what is known as "stop words" (i.e. words that are commonly used to make coherrent sentences b/c grammer). 
+
+A better approach may be to create a vector or list of these common words and modify the criteria function to be able to eliminate only those words. 
+
+NOTE: There isn't like a universal list for this so here's the list that I would be using. It can be found [here](https://www.textfixer.com/tutorials/common-english-words.txt)
+
+ALSO NOTE: Looking at the current words, there are some that are clearly a result of a URL link, which refers to those picture-specific questions, take those out as well. 
+
+My method of extracting this via str_detect for the given capture group '(www)' didn't work out, so had to do it the dumb meathead way by copy and pasting the list onto Excel and using the concatenate function to appropriately label each term as a character. Still worked out, just more time-consuming than it needed to be. 
+
+```{r}
+stop_words = c("a","able","about","across", "add","after","all","almost","also","am","among","an","and","any","are","as","at","be","because","been","but","by","can","cannot","could","dear","did","do","does", "due", "either","else","ever","every","for","from","get","got","had","has","have","he","her","hers","him","his","how","however","i","if","in","into","is","it","its","just","least","let","like","likely","may","me","might","most","must","my","neither","no","nor","not","of","off","often","on","only","or","other","our","own","rather","said","say","says","she","should","since","so","some","than","that","the","their","them","then","there","these","they","this","tis","to","too","twas","us", "until", "used", "wants","was","we","were","what","when","where","which","while","who","whom","why","will","with","would","yet","you","your", " ")
+
+words_to_remove = c(
+"hrefhttpwwwjarchivecommedia19841002dj09mp3thisa",
+"hrefhttpwwwjarchivecommedia19861210dj04mp3the",
+"hrefhttpwwwjarchivecommedia19870407dj28mp3followinga",
+"hrefhttpwwwjarchivecommedia19870427j09mp3the",
+"hrefhttpwwwjarchivecommedia19871112j13mp3followinga",
+"hrefhttpwwwjarchivecommedia19881111j22mp3followinga",
+"hrefhttpwwwjarchivecommedia19900126j13mp3herea",
+"hrefhttpwwwjarchivecommedia19901115j21mp3thisa",
+"hrefhttpwwwjarchivecommedia19971020j18mp3herea",
+"hrefhttpwwwjarchivecommedia19971031j09wmvgood",
+"hrefhttpwwwjarchivecommedia19971105j13wmvherea",
+"hrefhttpwwwjarchivecommedia19971223j03mp3herea",
+"hrefhttpwwwjarchivecommedia19971226j04jpg",
+"hrefhttpwwwjarchivecommedia19980212j03jpg",
+"hrefhttpwwwjarchivecommedia19980225j25jpg",
+"hrefhttpwwwjarchivecommedia19980225j25ajpg",
+"hrefhttpwwwjarchivecommedia19980225j25bjpg",
+"hrefhttpwwwjarchivecommedia19980317j16jpg",
+"hrefhttpwwwjarchivecommedia19980320j17mp3herea",
+"hrefhttpwwwjarchivecommedia19980320dj27wmvherea",
+"hrefhttpwwwjarchivecommedia19980327j04mp3herea",
+"hrefhttpwwwjarchivecommedia19980331dj18jpg",
+"hrefhttpwwwjarchivecommedia19980415j03jpg",
+"hrefhttpwwwjarchivecommedia19980416j18wmvherea",
+"hrefhttpwwwjarchivecommedia19980420j05mp3herea",
+"hrefhttpwwwjarchivecommedia19980420j24mp3herea",
+"hrefhttpwwwjarchivecommedia19980612j01jpg",
+"hrefhttpwwwjarchivecommedia19980911j16wmvherea",
+"hrefhttpwwwjarchivecommedia19981016j25jpg",
+"hrefhttpwwwjarchivecommedia19981019j20jpg",
+"hrefhttpwwwjarchivecommedia19981103dj17jpg",
+"hrefhttpwwwjarchivecommedia19981104dj12jpg",
+"hrefhttpwwwjarchivecommedia19981104dj05jpg",
+"hrefhttpwwwjarchivecommedia19981106dj19wmvherea",
+"hrefhttpwwwjarchivecommedia19981130dj20jpg",
+"hrefhttpwwwjarchivecommedia19981231j17jpg",
+"hrefhttpwwwjarchivecommedia19990209dj05jpg",
+"hrefhttpwwwjarchivecommedia19990226dj21jpg",
+"hrefhttpwwwjarchivecommedia20000501j23wmvherea",
+"hrefhttpwwwjarchivecommedia20001123dj17wmvihis",
+"hrefhttpwwwjarchivecommedia20010209dj11jpg",
+"hrefhttpwwwjarchivecommedia20010209dj01jpg",
+"hrefhttpwwwjarchivecommedia20010222dj07mp3herea",
+"hrefhttpwwwjarchivecommedia20010312dj02mp3herea",
+"hrefhttpwwwjarchivecommedia20010405dj19jpg",
+"hrefhttpwwwjarchivecommedia20010525dj16mp3herea",
+"hrefhttpwwwjarchivecommedia20010618dj05jpg",
+"hrefhttpwwwjarchivecommedia20010712j21jpg",
+"hrefhttpwwwjarchivecommedia20010713j07jpg",
+"hrefhttpwwwjarchivecommedia20010903j20jpg",
+"hrefhttpwwwjarchivecommedia20010904j17jpg",
+"hrefhttpwwwjarchivecommedia20010904j29jpg",
+"hrefhttpwwwjarchivecommedia20010907j04jpg",
+"hrefhttpwwwjarchivecommedia20010907j09jpg",
+"hrefhttpwwwjarchivecommedia20010911dj06jpg",
+"hrefhttpwwwjarchivecommedia20010919j11jpg",
+"hrefhttpwwwjarchivecommedia20010919dj25mp3herea",
+"hrefhttpwwwjarchivecommedia20010920j21jpg",
+"hrefhttpwwwjarchivecommedia20010920dj22jpg",
+"hrefhttpwwwjarchivecommedia20010921j18mp3pahk",
+"hrefhttpwwwjarchivecommedia20010921dj19jpg",
+"hrefhttpwwwjarchivecommedia20010925j21mp3go",
+"hrefhttpwwwjarchivecommedia20010925j12jpg",
+"hrefhttpwwwjarchivecommedia20010925j28mp3brace",
+"hrefhttpwwwjarchivecommedia20011001j05jpg",
+"hrefhttpwwwjarchivecommedia20011002dj11jpg",
+"hrefhttpwwwjarchivecommedia20011003j14jpg",
+"hrefhttpwwwjarchivecommedia20011003dj22jpg",
+"hrefhttpwwwjarchivecommedia20011004j08jpg",
+"hrefhttpwwwjarchivecommedia20011004dj25jpg",
+"hrefhttpwwwjarchivecommedia20011005j07jpg",
+"hrefhttpwwwjarchivecommedia20011005dj05jpg",
+"hrefhttpwwwjarchivecommedia20011025j23jpg",
+"hrefhttpwwwjarchivecommedia20011106j10jpg",
+"hrefhttpwwwjarchivecommedia20011123dj04jpg",
+"hrefhttpwwwjarchivecommedia20020225j25jpg",
+"hrefhttpwwwjarchivecommedia20020226j14wmvjimmy",
+"hrefhttpwwwjarchivecommedia20020226j14jpg",
+"hrefhttpwwwjarchivecommedia20020226dj19ajpg",
+"hrefhttpwwwjarchivecommedia20020226dj19jpg",
+"hrefhttpwwwjarchivecommedia20020430j17jpg",
+"hrefhttpwwwjarchivecommedia20020430j18jpg",
+"hrefhttpwwwjarchivecommedia20020503j05jpg",
+"hrefhttpwwwjarchivecommedia20020510j19wmvsofia",
+"hrefhttpwwwjarchivecommedia20020514j03wmvjimmy",
+"hrefhttpwwwjarchivecommedia20020605j14jpg",
+"hrefhttpwwwjarchivecommedia20020606dj24jpg",
+"hrefhttpwwwjarchivecommedia20020610dj25jpg",
+"hrefhttpwwwjarchivecommedia20020611j11wmvjimmy",
+"hrefhttpwwwjarchivecommedia20020702j14jpg",
+"hrefhttpwwwjarchivecommedia20020704j25jpg",
+"hrefhttpwwwjarchivecommedia20020704j25ajpg",
+"hrefhttpwwwjarchivecommedia20020903dj24jpg",
+"hrefhttpwwwjarchivecommedia20020905dj19jpg",
+"hrefhttpwwwjarchivecommedia20020906dj21jpg",
+"hrefhttpwwwjarchivecommedia20020909j05jpg",
+"hrefhttpwwwjarchivecommedia20020912j29jpg",
+"hrefhttpwwwjarchivecommedia20020912j29ajpg",
+"hrefhttpwwwjarchivecommedia20021125j09jpg",
+"hrefhttpwwwjarchivecommedia20021127j20jpg",
+"hrefhttpwwwjarchivecommedia20021129j03jpg",
+"hrefhttpwwwjarchivecommedia20021129j20jpg",
+"hrefhttpwwwjarchivecommedia20021129j20ajpg",
+"hrefhttpwwwjarchivecommedia20030107j16jpg",
+"hrefhttpwwwjarchivecommedia20030107j16ajpg",
+"hrefhttpwwwjarchivecommedia20030410j14jpg",
+"hrefhttpwwwjarchivecommedia20030410dj17jpg",
+"hrefhttpwwwjarchivecommedia20030410dj17ajpg",
+"hrefhttpwwwjarchivecommedia20030411j02jpg",
+"hrefhttpwwwjarchivecommedia20030411dj10jpg",
+"hrefhttpwwwjarchivecommedia20030416dj08jpg",
+"hrefhttpwwwjarchivecommedia20030513j30jpg",
+"hrefhttpwwwjarchivecommedia20030908dj15jpg",
+"hrefhttpwwwjarchivecommedia20030912j30jpg",
+"hrefhttpwwwjarchivecommedia20040202j22jpg",
+"hrefhttpwwwjarchivecommedia20040202j22ajpg",
+"hrefhttpwwwjarchivecommedia20040319dj05wmvsofia",
+"hrefhttpwwwjarchivecommedia20040507j22mp3thisa",
+"hrefhttpwwwjarchivecommedia20040517dj04jpg",
+"hrefhttpwwwjarchivecommedia20040518j19wmvsofia",
+"hrefhttpwwwjarchivecommedia20040518dj02jpg",
+"hrefhttpwwwjarchivecommedia20040520dj18jpg",
+"hrefhttpwwwjarchivecommedia20040526j05jpg",
+"hrefhttpwwwjarchivecommedia20040528j17jpg",
+"hrefhttpwwwjarchivecommedia20040528j17wmvbegana",
+"hrefhttpwwwjarchivecommedia20040528dj10jpg",
+"hrefhttpwwwjarchivecommedia20040531dj01jpg",
+"hrefhttpwwwjarchivecommedia20040601j24jpg",
+"hrefhttpwwwjarchivecommedia20040601j24ajpg",
+"hrefhttpwwwjarchivecommedia20040602j28jpg",
+"hrefhttpwwwjarchivecommedia20040603dj27jpg",
+"hrefhttpwwwjarchivecommedia20040603dj27ajpg",
+"hrefhttpwwwjarchivecommedia20040611j14jpg",
+"hrefhttpwwwjarchivecommedia20040617dj25wmvsarah",
+"hrefhttpwwwjarchivecommedia20040622dj02jpg",
+"hrefhttpwwwjarchivecommedia20040624j25jpg",
+"hrefhttpwwwjarchivecommedia20040624j25bjpg",
+"hrefhttpwwwjarchivecommedia20040624j25ajpg",
+"hrefhttpwwwjarchivecommedia20040628dj22jpg",
+"hrefhttpwwwjarchivecommedia20040630dj04mp3herea",
+"hrefhttpwwwjarchivecommedia20040701j02jpg",
+"hrefhttpwwwjarchivecommedia20040702j10jpg",
+"hrefhttpwwwjarchivecommedia20040702dj03jpg",
+"hrefhttpwwwjarchivecommedia20040705dj15wmvsarah",
+"hrefhttpwwwjarchivecommedia20040706j30jpg",
+"hrefhttpwwwjarchivecommedia20040708j29jpg",
+"hrefhttpwwwjarchivecommedia20040708j29ajpg",
+"hrefhttpwwwjarchivecommedia20040719dj11wmvcheryl",
+"hrefhttpwwwjarchivecommedia20040719dj11jpg",
+"hrefhttpwwwjarchivecommedia20040719dj11ajpg",
+"hrefhttpwwwjarchivecommedia20040719dj11bjpg",
+"hrefhttpwwwjarchivecommedia20040720dj13jpg",
+"hrefhttpwwwjarchivecommedia20040720dj13ajpg",
+"hrefhttpwwwjarchivecommedia20040722j29wmvcheryl",
+"hrefhttpwwwjarchivecommedia20040906dj12jpg",
+"hrefhttpwwwjarchivecommedia20040909dj16wmvjimmy",
+"hrefhttpwwwjarchivecommedia20040909dj17wmvsofia",
+"hrefhttpwwwjarchivecommedia20040909dj22mp3followinga",
+"hrefhttpwwwjarchivecommedia20040913dj03jpg",
+"hrefhttpwwwjarchivecommedia20040913dj15mp3herea",
+"hrefhttpwwwjarchivecommedia20040917j24wmvsofia",
+"hrefhttpwwwjarchivecommedia20040920dj14jpg",
+"hrefhttpwwwjarchivecommedia20040921j25jpg",
+"hrefhttpwwwjarchivecommedia20040927j28jpg",
+"hrefhttpwwwjarchivecommedia20040927dj30jpg",
+"hrefhttpwwwjarchivecommedia20041004dj14jpg",
+"hrefhttpwwwjarchivecommedia20041005dj20jpg",
+"hrefhttpwwwjarchivecommedia20041005dj20ajpg",
+"hrefhttpwwwjarchivecommedia20041008j08jpg",
+"hrefhttpwwwjarchivecommedia20041008dj26wmvherea",
+"hrefhttpwwwjarchivecommedia20041011dj06jpg",
+"hrefhttpwwwjarchivecommedia20041011dj06ajpg",
+"hrefhttpwwwjarchivecommedia20041011dj17jpg",
+"hrefhttpwwwjarchivecommedia20041012j29wmvsofia",
+"hrefhttpwwwjarchivecommedia20041013dj18jpg",
+"hrefhttpwwwjarchivecommedia20041015dj05jpg",
+"hrefhttpwwwjarchivecommedia20041015dj05mp3typea",
+"hrefhttpwwwjarchivecommedia20041018j10jpg",
+"hrefhttpwwwjarchivecommedia20041019j29jpg",
+"hrefhttpwwwjarchivecommedia20041020j17jpg",
+"hrefhttpwwwjarchivecommedia20041021dj07jpg",
+"hrefhttpwwwjarchivecommedia20041022dj14jpg",
+"hrefhttpwwwjarchivecommedia20041022dj25jpg",
+"hrefhttpwwwjarchivecommedia20041022dj25ajpg",
+"hrefhttpwwwjarchivecommedia20041025dj29mp3thisa",
+"hrefhttpwwwjarchivecommedia20041026j22jpg",
+"hrefhttpwwwjarchivecommedia20041028dj05jpg",
+"hrefhttpwwwjarchivecommedia20041028dj05ajpg",
+"hrefhttpwwwjarchivecommedia20041101j13jpg",
+"hrefhttpwwwjarchivecommedia20041111j26jpg",
+"hrefhttpwwwjarchivecommedia20041116j02jpg",
+"hrefhttpwwwjarchivecommedia20041117j01jpg",
+"hrefhttpwwwjarchivecommedia20041117dj26jpg",
+"hrefhttpwwwjarchivecommedia20041123dj07jpg",
+"hrefhttpwwwjarchivecommedia20041126dj10jpg",
+"hrefhttpwwwjarchivecommedia20041126dj10ajpg",
+"hrefhttpwwwjarchivecommedia20041130j02wmvjerry",
+"hrefhttpwwwjarchivecommedia20041130j02jpg",
+"hrefhttpwwwjarchivecommedia20041202j25jpg",
+"hrefhttpwwwjarchivecommedia20041203j10mp3thisa",
+"hrefhttpwwwjarchivecommedia20041213j05jpg",
+"hrefhttpwwwjarchivecommedia20041213dj26jpg",
+"hrefhttpwwwjarchivecommedia20041213dj27jpg",
+"hrefhttpwwwjarchivecommedia20041214j12jpg",
+"hrefhttpwwwjarchivecommedia20041215dj25jpg",
+"hrefhttpwwwjarchivecommedia20041215dj10jpg",
+"hrefhttpwwwjarchivecommedia20041216dj16jpg",
+"hrefhttpwwwjarchivecommedia20041223dj25jpg",
+"hrefhttpwwwjarchivecommedia20041223dj29jpg",
+"hrefhttpwwwjarchivecommedia20041230dj08jpg",
+"hrefhttpwwwjarchivecommedia20041230dj29jpg",
+"hrefhttpwwwjarchivecommedia20041231dj12jpg",
+"hrefhttpwwwjarchivecommedia20050104dj24jpg",
+"hrefhttpwwwjarchivecommedia20050107dj27jpg",
+"hrefhttpwwwjarchivecommedia20050110j17mp3followinga",
+"hrefhttpwwwjarchivecommedia20050112j17jpg",
+"hrefhttpwwwjarchivecommedia20050120dj12jpg",
+"hrefhttpwwwjarchivecommedia20050125j08jpg",
+"hrefhttpwwwjarchivecommedia20050125j08ajpg",
+"hrefhttpwwwjarchivecommedia20050208j14jpg",
+"hrefhttpwwwjarchivecommedia20050208j25jpg",
+"hrefhttpwwwjarchivecommedia20050210dj09jpg",
+"hrefhttpwwwjarchivecommedia20050211dj17jpg",
+"hrefhttpwwwjarchivecommedia20050214dj07jpg",
+"hrefhttpwwwjarchivecommedia20050214dj07ajpg",
+"hrefhttpwwwjarchivecommedia20050215j04jpg",
+"hrefhttpwwwjarchivecommedia20050215j04ajpg",
+"hrefhttpwwwjarchivecommedia20050215dj06jpg",
+"hrefhttpwwwjarchivecommedia20050215dj06ajpg",
+"hrefhttpwwwjarchivecommedia20050222dj11jpg",
+"hrefhttpwwwjarchivecommedia20050301dj04jpg",
+"hrefhttpwwwjarchivecommedia20050301dj04ajpg",
+"hrefhttpwwwjarchivecommedia20050310dj29jpg",
+"hrefhttpwwwjarchivecommedia20050330dj24jpg",
+"hrefhttpwwwjarchivecommedia20050330dj24ajpg",
+"hrefhttpwwwjarchivecommedia20050401dj19jpg",
+"hrefhttpwwwjarchivecommedia20050404dj17jpg",
+"hrefhttpwwwjarchivecommedia20050406j05jpg",
+"hrefhttpwwwjarchivecommedia20050411dj25jpg",
+"hrefhttpwwwjarchivecommedia20050412j20jpg",
+"hrefhttpwwwjarchivecommedia20050412j20ajpg",
+"hrefhttpwwwjarchivecommedia20050418dj02jpg",
+"hrefhttpwwwjarchivecommedia20050418dj10jpg",
+"hrefhttpwwwjarchivecommedia20050418dj10ajpg",
+"hrefhttpwwwjarchivecommedia20050426j27wmviboooo",
+"hrefhttpwwwjarchivecommedia20050426j28wmvihow",
+"hrefhttpwwwjarchivecommedia20050429j19jpg",
+"hrefhttpwwwjarchivecommedia20050429dj20jpg",
+"hrefhttpwwwjarchivecommedia20050502dj21jpg",
+"hrefhttpwwwjarchivecommedia20050502dj21ajpg",
+"hrefhttpwwwjarchivecommedia20050504dj04jpg",
+"hrefhttpwwwjarchivecommedia20050504dj04ajpg",
+"hrefhttpwwwjarchivecommedia20050504dj30jpg",
+"hrefhttpwwwjarchivecommedia20050504dj30ajpg",
+"hrefhttpwwwjarchivecommedia20050506dj01jpg",
+"hrefhttpwwwjarchivecommedia20050506dj01ajpg",
+"hrefhttpwwwjarchivecommedia20050506dj03jpg",
+"hrefhttpwwwjarchivecommedia20050509dj15wmvthisa",
+"hrefhttpwwwjarchivecommedia20050511dj21wmvaids",
+"hrefhttpwwwjarchivecommedia20050511dj23jpg",
+"hrefhttpwwwjarchivecommedia20050512j04wmvthisa",
+"hrefhttpwwwjarchivecommedia20050512dj29jpg",
+"hrefhttpwwwjarchivecommedia20050519dj12jpg",
+"hrefhttpwwwjarchivecommedia20050519dj12ajpg",
+"hrefhttpwwwjarchivecommedia20050524dj02jpg",
+"hrefhttpwwwjarchivecommedia20050524dj02ajpg",
+"hrefhttpwwwjarchivecommedia20050527dj17jpg",
+"hrefhttpwwwjarchivecommedia20050527dj17ajpg",
+"hrefhttpwwwjarchivecommedia20050603j07jpg",
+"hrefhttpwwwjarchivecommedia20050603dj03jpg",
+"hrefhttpwwwjarchivecommedia20050603dj03ajpg",
+"hrefhttpwwwjarchivecommedia20050603dj03bjpg",
+"hrefhttpwwwjarchivecommedia20050606dj10jpg",
+"hrefhttpwwwjarchivecommedia20050608dj14jpg",
+"hrefhttpwwwjarchivecommedia20050608dj14ajpg",
+"hrefhttpwwwjarchivecommedia20050616j01jpg",
+"hrefhttpwwwjarchivecommedia20050621j26jpg",
+"hrefhttpwwwjarchivecommedia20050621j30jpg",
+"hrefhttpwwwjarchivecommedia20050624j28jpg",
+"hrefhttpwwwjarchivecommedia20050624j28ajpg",
+"hrefhttpwwwjarchivecommedia20050628j25jpg",
+"hrefhttpwwwjarchivecommedia20050630dj05jpg",
+"hrefhttpwwwjarchivecommedia20050701j05mp3the",
+"hrefhttpwwwjarchivecommedia20050704j28jpg",
+"hrefhttpwwwjarchivecommedia20050704dj19jpg",
+"hrefhttpwwwjarchivecommedia20050713j30jpg",
+"hrefhttpwwwjarchivecommedia20050713j03jpg",
+"hrefhttpwwwjarchivecommedia20050713dj20jpg",
+"hrefhttpwwwjarchivecommedia20050713dj08jpg",
+"hrefhttpwwwjarchivecommedia20050714j20jpg",
+"hrefhttpwwwjarchivecommedia20050718dj17jpg",
+"hrefhttpwwwjarchivecommedia20050720dj11jpg",
+"hrefhttpwwwjarchivecommedia20050721dj27mp3",
+"hrefhttpwwwjarchivecommedia20050920j20jpg",
+"hrefhttpwwwjarchivecommedia20050920j04mp3boneless",
+"hrefhttpwwwjarchivecommedia20050922dj24jpg",
+"hrefhttpwwwjarchivecommedia20050922dj28jpg",
+"hrefhttpwwwjarchivecommedia20050923dj18jpg",
+"hrefhttpwwwjarchivecommedia20050926dj20jpg",
+"hrefhttpwwwjarchivecommedia20050928j27jpg",
+"hrefhttpwwwjarchivecommedia20050930j26jpg",
+"hrefhttpwwwjarchivecommedia20051004dj24jpg",
+"hrefhttpwwwjarchivecommedia20051012j16jpg",
+"hrefhttpwwwjarchivecommedia20051012j27jpg",
+"hrefhttpwwwjarchivecommedia20051013dj21jpg",
+"hrefhttpwwwjarchivecommedia20051020j24jpg",
+"hrefhttpwwwjarchivecommedia20051021dj22jpg",
+"hrefhttpwwwjarchivecommedia20051021dj22ajpg",
+"hrefhttpwwwjarchivecommedia20051021dj18jpg",
+"hrefhttpwwwjarchivecommedia20051026j10jpg",
+"hrefhttpwwwjarchivecommedia20051026j10ajpg",
+"hrefhttpwwwjarchivecommedia20051031j11jpg",
+"hrefhttpwwwjarchivecommedia20051101dj01jpg",
+"hrefhttpwwwjarchivecommedia20051101dj04jpg",
+"hrefhttpwwwjarchivecommedia20051101dj04ajpg",
+"hrefhttpwwwjarchivecommedia20051103j21jpg",
+"hrefhttpwwwjarchivecommedia20051104dj24jpg",
+"hrefhttpwwwjarchivecommedia20051104dj25jpg",
+"hrefhttpwwwjarchivecommedia20051104dj25ajpg",
+"hrefhttpwwwjarchivecommedia20051107dj24jpg",
+"hrefhttpwwwjarchivecommedia20051111dj17wmvcheryl",
+"hrefhttpwwwjarchivecommedia20051111dj20jpg",
+"hrefhttpwwwjarchivecommedia20051115dj17wmvsarah",
+"hrefhttpwwwjarchivecommedia20051117j17jpg",
+"hrefhttpwwwjarchivecommedia20051117j17ajpg",
+"hrefhttpwwwjarchivecommedia20051118dj26mp3breaking",
+"hrefhttpwwwjarchivecommedia20051124j30jpg",
+"hrefhttpwwwjarchivecommedia20051124j30ajpg",
+"hrefhttpwwwjarchivecommedia20051128j11jpg",
+"hrefhttpwwwjarchivecommedia20051201j16mp3im",
+"hrefhttpwwwjarchivecommedia20051209j19mp3this",
+"hrefhttpwwwjarchivecommedia20051213dj20jpg",
+"hrefhttpwwwjarchivecommedia20051214dj30jpg",
+"hrefhttpwwwjarchivecommedia20051214dj30ajpg",
+"hrefhttpwwwjarchivecommedia20051215dj30jpg",
+"hrefhttpwwwjarchivecommedia20051215dj30ajpg",
+"hrefhttpwwwjarchivecommedia20051222j16jpg",
+"hrefhttpwwwjarchivecommedia20051222dj23jpg",
+"hrefhttpwwwjarchivecommedia20051227dj13jpg",
+"hrefhttpwwwjarchivecommedia20051228j04jpg",
+"hrefhttpwwwjarchivecommedia20051228j04ajpg",
+"hrefhttpwwwjarchivecommedia20060105dj09mp3herea",
+"hrefhttpwwwjarchivecommedia20060106dj26jpg",
+"hrefhttpwwwjarchivecommedia20060110dj02jpg",
+"hrefhttpwwwjarchivecommedia20060111j16jpg",
+"hrefhttpwwwjarchivecommedia20060111j16ajpg",
+"hrefhttpwwwjarchivecommedia20060112j07jpg",
+"hrefhttpwwwjarchivecommedia20060112j07ajpg",
+"hrefhttpwwwjarchivecommedia20060112j09jpg",
+"hrefhttpwwwjarchivecommedia20060112j10jpg",
+"hrefhttpwwwjarchivecommedia20060112j15jpg",
+"hrefhttpwwwjarchivecommedia20060119dj28jpg",
+"hrefhttpwwwjarchivecommedia20060120j29jpg",
+"hrefhttpwwwjarchivecommedia20060120j29ajpg",
+"hrefhttpwwwjarchivecommedia20060130dj18jpg",
+"hrefhttpwwwjarchivecommedia20060130dj18ajpg",
+"hrefhttpwwwjarchivecommedia20060201dj07mp3mon",
+"hrefhttpwwwjarchivecommedia20060201dj19mp3surely",
+"hrefhttpwwwjarchivecommedia20060202j29jpg",
+"hrefhttpwwwjarchivecommedia20060203dj30jpg",
+"hrefhttpwwwjarchivecommedia20060203dj30ajpg",
+"hrefhttpwwwjarchivecommedia20060208j21jpg",
+"hrefhttpwwwjarchivecommedia20060208j21ajpg",
+"hrefhttpwwwjarchivecommedia20060209j28jpg",
+"hrefhttpwwwjarchivecommedia20060209dj30jpg",
+"hrefhttpwwwjarchivecommedia20060213dj25mp3wi",
+"hrefhttpwwwjarchivecommedia20060215j13jpg",
+"hrefhttpwwwjarchivecommedia20060215j13ajpg",
+"hrefhttpwwwjarchivecommedia20060220j28jpg",
+"hrefhttpwwwjarchivecommedia20060220dj18jpg",
+"hrefhttpwwwjarchivecommedia20060227dj23jpg",
+"hrefhttpwwwjarchivecommedia20060227dj23ajpg",
+"hrefhttpwwwjarchivecommedia20060227dj24jpg",
+"hrefhttpwwwjarchivecommedia20060228j30wmvsarah",
+"hrefhttpwwwjarchivecommedia20060303dj27jpg",
+"hrefhttpwwwjarchivecommedia20060303dj28jpg",
+"hrefhttpwwwjarchivecommedia20060303dj28ajpg",
+"hrefhttpwwwjarchivecommedia20060307j04jpg",
+"hrefhttpwwwjarchivecommedia20060309dj11jpg",
+"hrefhttpwwwjarchivecommedia20060310j22jpg",
+"hrefhttpwwwjarchivecommedia20060313j07jpg",
+"hrefhttpwwwjarchivecommedia20060313j07ajpg",
+"hrefhttpwwwjarchivecommedia20060317dj23mp3herea",
+"hrefhttpwwwjarchivecommedia20060321j14jpg",
+"hrefhttpwwwjarchivecommedia20060322j24mp3th",
+"hrefhttpwwwjarchivecommedia20060322dj08jpg",
+"hrefhttpwwwjarchivecommedia20060327j19jpg",
+"hrefhttpwwwjarchivecommedia20060328j22jpg",
+"hrefhttpwwwjarchivecommedia20060329dj30jpg",
+"hrefhttpwwwjarchivecommedia20060405dj09wmvthesea",
+"hrefhttpwwwjarchivecommedia20060406j03jpg",
+"hrefhttpwwwjarchivecommedia20060406j04jpg",
+"hrefhttpwwwjarchivecommedia20060411j05jpg",
+"hrefhttpwwwjarchivecommedia20060411dj13jpg",
+"hrefhttpwwwjarchivecommedia20060412j06jpg",
+"hrefhttpwwwjarchivecommedia20060413dj15jpg",
+"hrefhttpwwwjarchivecommedia20060413dj15ajpg",
+"hrefhttpwwwjarchivecommedia20060414j28jpg",
+"hrefhttpwwwjarchivecommedia20060414dj24jpg",
+"hrefhttpwwwjarchivecommedia20060414dj24ajpg",
+"hrefhttpwwwjarchivecommedia20060417j12jpg",
+"hrefhttpwwwjarchivecommedia20060417j15jpg",
+"hrefhttpwwwjarchivecommedia20060419j16jpg",
+"hrefhttpwwwjarchivecommedia20060420dj08jpg",
+"hrefhttpwwwjarchivecommedia20060420dj08ajpg",
+"hrefhttpwwwjarchivecommedia20060425dj15jpg",
+"hrefhttpwwwjarchivecommedia20060425dj15ajpg",
+"hrefhttpwwwjarchivecommedia20060426j23jpg",
+"hrefhttpwwwjarchivecommedia20060426j25jpg",
+"hrefhttpwwwjarchivecommedia20060427j21wmvherea",
+"hrefhttpwwwjarchivecommedia20060501dj08jpg",
+"hrefhttpwwwjarchivecommedia20060503dj14jpg",
+"hrefhttpwwwjarchivecommedia20060503dj14ajpg",
+"hrefhttpwwwjarchivecommedia20060505j24jpg",
+"hrefhttpwwwjarchivecommedia20060505dj15jpg",
+"hrefhttpwwwjarchivecommedia20060509dj09mp3this",
+"hrefhttpwwwjarchivecommedia20060511j10jpg",
+"hrefhttpwwwjarchivecommedia20060511j10ajpg",
+"hrefhttpwwwjarchivecommedia20060512dj15jpg",
+"hrefhttpwwwjarchivecommedia20060519dj14wmvthisa",
+"hrefhttpwwwjarchivecommedia20060523j20jpg",
+"hrefhttpwwwjarchivecommedia20060525dj09jpg",
+"hrefhttpwwwjarchivecommedia20060529dj03mp3i",
+"hrefhttpwwwjarchivecommedia20060530dj05mp3lieutenant",
+"hrefhttpwwwjarchivecommedia20060606dj15jpg",
+"hrefhttpwwwjarchivecommedia20060608j29mp3herea",
+"hrefhttpwwwjarchivecommedia20060608dj09mp3thisa",
+"hrefhttpwwwjarchivecommedia20060609dj17jpg",
+"hrefhttpwwwjarchivecommedia20060613j12jpg",
+"hrefhttpwwwjarchivecommedia20060614dj09jpg",
+"hrefhttpwwwjarchivecommedia20060616j08jpg",
+"hrefhttpwwwjarchivecommedia20060620j13jpg",
+"hrefhttpwwwjarchivecommedia20060628dj12jpg",
+"hrefhttpwwwjarchivecommedia20060629dj14jpg",
+"hrefhttpwwwjarchivecommedia20060630dj28jpg",
+"hrefhttpwwwjarchivecommedia20060630dj28ajpg",
+"hrefhttpwwwjarchivecommedia20060706dj28jpg",
+"hrefhttpwwwjarchivecommedia20060712j07jpg",
+"hrefhttpwwwjarchivecommedia20060712j12mp3you",
+"hrefhttpwwwjarchivecommedia20060717dj25jpg",
+"hrefhttpwwwjarchivecommedia20060719j20jpg",
+"hrefhttpwwwjarchivecommedia20060725j06mp3followinga",
+"hrefhttpwwwjarchivecommedia20060726dj02jpg",
+"hrefhttpwwwjarchivecommedia20060728dj04jpg",
+"hrefhttpwwwjarchivecommedia20060911dj05jpg",
+"hrefhttpwwwjarchivecommedia20060911dj05ajpg",
+"hrefhttpwwwjarchivecommedia20060914dj06jpg",
+"hrefhttpwwwjarchivecommedia20060914dj06ajpg",
+"hrefhttpwwwjarchivecommedia20060920j10wmvhereacant",
+"hrefhttpwwwjarchivecommedia20060921dj29jpg",
+"hrefhttpwwwjarchivecommedia20060922dj28jpg",
+"hrefhttpwwwjarchivecommedia20060922dj28ajpg",
+"hrefhttpwwwjarchivecommedia20060926j11jpg",
+"hrefhttpwwwjarchivecommedia20060926j11ajpg",
+"hrefhttpwwwjarchivecommedia20060927j11jpg",
+"hrefhttpwwwjarchivecommedia20060927dj08jpg",
+"hrefhttpwwwjarchivecommedia20060927dj08ajpg",
+"hrefhttpwwwjarchivecommedia20060927dj10jpg",
+"hrefhttpwwwjarchivecommedia20060929j25wmvthisa",
+"hrefhttpwwwjarchivecommedia20061002dj01wmvherea",
+"hrefhttpwwwjarchivecommedia20061004j16jpg",
+"hrefhttpwwwjarchivecommedia20061005j24wmvkelly",
+"hrefhttpwwwjarchivecommedia20061005dj10jpg",
+"hrefhttpwwwjarchivecommedia20061009j28mp3herea",
+"hrefhttpwwwjarchivecommedia20061010j15jpg",
+"hrefhttpwwwjarchivecommedia20061010dj05jpg",
+"hrefhttpwwwjarchivecommedia20061016j26wmvjimmy",
+"hrefhttpwwwjarchivecommedia20061016dj19mp3you",
+"hrefhttpwwwjarchivecommedia20061019j12jpg",
+"hrefhttpwwwjarchivecommedia20061019j28jpg",
+"hrefhttpwwwjarchivecommedia20061019j28ajpg",
+"hrefhttpwwwjarchivecommedia20061024dj30jpg",
+"hrefhttpwwwjarchivecommedia20061024dj30ajpg",
+"hrefhttpwwwjarchivecommedia20061026j22wmvherea",
+"hrefhttpwwwjarchivecommedia20061030dj28jpg",
+"hrefhttpwwwjarchivecommedia20061030dj28ajpg",
+"hrefhttpwwwjarchivecommedia20061031j17jpg",
+"hrefhttpwwwjarchivecommedia20061102j02jpg",
+"hrefhttpwwwjarchivecommedia20061102j02bjpg",
+"hrefhttpwwwjarchivecommedia20061102j02ajpg",
+"hrefhttpwwwjarchivecommedia20061108j07wmvbefore",
+"hrefhttpwwwjarchivecommedia20061113j13wmvherea",
+"hrefhttpwwwjarchivecommedia20061113j07jpg",
+"hrefhttpwwwjarchivecommedia20061114dj04jpg",
+"hrefhttpwwwjarchivecommedia20061120dj02wmvbefore",
+"hrefhttpwwwjarchivecommedia20061121dj14jpg",
+"hrefhttpwwwjarchivecommedia20061123j15jpg",
+"hrefhttpwwwjarchivecommedia20061127dj13jpg",
+"hrefhttpwwwjarchivecommedia20061128j08jpg",
+"hrefhttpwwwjarchivecommedia20061207dj07jpg",
+"hrefhttpwwwjarchivecommedia20061211j01mp3your",
+"hrefhttpwwwjarchivecommedia20061212dj25jpg",
+"hrefhttpwwwjarchivecommedia20061213dj22jpg",
+"hrefhttpwwwjarchivecommedia20061213dj13jpg",
+"hrefhttpwwwjarchivecommedia20061215j22jpg",
+"hrefhttpwwwjarchivecommedia20061215j27jpg",
+"hrefhttpwwwjarchivecommedia20061221j27jpg",
+"hrefhttpwwwjarchivecommedia20061222dj24jpg",
+"hrefhttpwwwjarchivecommedia20061222dj24ajpg",
+"hrefhttpwwwjarchivecommedia20061225dj25wmvherea",
+"hrefhttpwwwjarchivecommedia20061228j29jpg",
+"hrefhttpwwwjarchivecommedia20061228j11jpg",
+"hrefhttpwwwjarchivecommedia20070102dj26jpg",
+"hrefhttpwwwjarchivecommedia20070103j07jpg",
+"hrefhttpwwwjarchivecommedia20070103j07ajpg",
+"hrefhttpwwwjarchivecommedia20070103dj27mp3its",
+"hrefhttpwwwjarchivecommedia20070105dj16jpg",
+"hrefhttpwwwjarchivecommedia20070112dj28jpg",
+"hrefhttpwwwjarchivecommedia20070112dj28ajpg",
+"hrefhttpwwwjarchivecommedia20071117j24jpg",
+"hrefhttpwwwjarchivecommedia20071117dj08jpg",
+"hrefhttpwwwjarchivecommedia20070119dj24jpg",
+"hrefhttpwwwjarchivecommedia20070119dj24ajpg",
+"hrefhttpwwwjarchivecommedia20070126dj30jpg",
+"hrefhttpwwwjarchivecommedia20070126dj30ajpg",
+"hrefhttpwwwjarchivecommedia20070131dj29jpg",
+"hrefhttpwwwjarchivecommedia20070131dj29ajpg",
+"hrefhttpwwwjarchivecommedia20070208dj02jpg",
+"hrefhttpwwwjarchivecommedia20070208dj18jpg",
+"hrefhttpwwwjarchivecommedia20070214dj14jpg",
+"hrefhttpwwwjarchivecommedia20070214dj14ajpg",
+"hrefhttpwwwjarchivecommedia20070222j26mp3herea",
+"hrefhttpwwwjarchivecommedia20070222dj06jpg",
+"hrefhttpwwwjarchivecommedia20070222dj06ajpg",
+"hrefhttpwwwjarchivecommedia20070227dj27jpg",
+"hrefhttpwwwjarchivecommedia20070227dj28jpg",
+"hrefhttpwwwjarchivecommedia20070302dj01jpg",
+"hrefhttpwwwjarchivecommedia20070306j19jpg",
+"hrefhttpwwwjarchivecommedia20070307dj06jpg",
+"hrefhttpwwwjarchivecommedia20070307dj12jpg",
+"hrefhttpwwwjarchivecommedia20070308dj12jpg",
+"hrefhttpwwwjarchivecommedia20070315j08mp3forget",
+"hrefhttpwwwjarchivecommedia20070320j08jpg",
+"hrefhttpwwwjarchivecommedia20070320j23jpg",
+"hrefhttpwwwjarchivecommedia20070322dj13jpg",
+"hrefhttpwwwjarchivecommedia20070322dj13ajpg",
+"hrefhttpwwwjarchivecommedia20070328dj14jpg",
+"hrefhttpwwwjarchivecommedia20070329j18jpg",
+"hrefhttpwwwjarchivecommedia20070329j23jpg",
+"hrefhttpwwwjarchivecommedia20070403j06mp3yes",
+"hrefhttpwwwjarchivecommedia20070403j06mp3",
+"hrefhttpwwwjarchivecommedia20070403dj15jpg",
+"hrefhttpwwwjarchivecommedia20070403dj15ajpg",
+"hrefhttpwwwjarchivecommedia20070412dj10jpg",
+"hrefhttpwwwjarchivecommedia20070413dj08jpg",
+"hrefhttpwwwjarchivecommedia20070413dj13jpg",
+"hrefhttpwwwjarchivecommedia20070413dj11jpg",
+"hrefhttpwwwjarchivecommedia20070418j22jpg",
+"hrefhttpwwwjarchivecommedia20070419dj22jpg",
+"hrefhttpwwwjarchivecommedia20070423dj24jpg",
+"hrefhttpwwwjarchivecommedia20070423dj26mp3thisa",
+"hrefhttpwwwjarchivecommedia20070426j17jpg",
+"hrefhttpwwwjarchivecommedia20070426dj18jpg",
+"hrefhttpwwwjarchivecommedia20070427dj29jpg",
+"hrefhttpwwwjarchivecommedia20070430dj30jpg",
+"hrefhttpwwwjarchivecommedia20070501dj07jpg",
+"hrefhttpwwwjarchivecommedia20070503j04jpg",
+"hrefhttpwwwjarchivecommedia20070503j04ajpg",
+"hrefhttpwwwjarchivecommedia20070503dj15mp3ibut",
+"hrefhttpwwwjarchivecommedia20070504dj03jpg",
+"hrefhttpwwwjarchivecommedia20070504dj03ajpg",
+"hrefhttpwwwjarchivecommedia20070504dj05jpg",
+"hrefhttpwwwjarchivecommedia20070508j26jpg",
+"hrefhttpwwwjarchivecommedia20070508j29jpg",
+"hrefhttpwwwjarchivecommedia20070508j09jpg",
+"hrefhttpwwwjarchivecommedia20070509j10jpg",
+"hrefhttpwwwjarchivecommedia20070509j15jpg",
+"hrefhttpwwwjarchivecommedia20070509j18jpg",
+"hrefhttpwwwjarchivecommedia20070511dj07jpg",
+"hrefhttpwwwjarchivecommedia20070517dj30jpg",
+"hrefhttpwwwjarchivecommedia20070517dj30ajpg",
+"hrefhttpwwwjarchivecommedia20070518j10jpg",
+"hrefhttpwwwjarchivecommedia20070523j15jpg",
+"hrefhttpwwwjarchivecommedia20070528j28jpg",
+"hrefhttpwwwjarchivecommedia20070528j30jpg",
+"hrefhttpwwwjarchivecommedia20070528dj28jpg",
+"hrefhttpwwwjarchivecommedia20070528dj30jpg",
+"hrefhttpwwwjarchivecommedia20070529j12jpg",
+"hrefhttpwwwjarchivecommedia20070530j17jpg",
+"hrefhttpwwwjarchivecommedia20070530j17ajpg",
+"hrefhttpwwwjarchivecommedia20070531j17jpg",
+"hrefhttpwwwjarchivecommedia20070604dj29jpg",
+"hrefhttpwwwjarchivecommedia20070604dj29ajpg",
+"hrefhttpwwwjarchivecommedia20070606dj23jpg",
+"hrefhttpwwwjarchivecommedia20070606dj23ajpg",
+"hrefhttpwwwjarchivecommedia20070607dj20jpg",
+"hrefhttpwwwjarchivecommedia20070607dj20ajpg",
+"hrefhttpwwwjarchivecommedia20070611dj09jpg",
+"hrefhttpwwwjarchivecommedia20070611dj09ajpg",
+"hrefhttpwwwjarchivecommedia20070614dj28mp3its",
+"hrefhttpwwwjarchivecommedia20070627dj27jpg",
+"hrefhttpwwwjarchivecommedia20070628j01jpg",
+"hrefhttpwwwjarchivecommedia20070628dj29jpg",
+"hrefhttpwwwjarchivecommedia20070703j06mp3it",
+"hrefhttpwwwjarchivecommedia20070704dj17jpg",
+"hrefhttpwwwjarchivecommedia20070705dj15mp3listena",
+"hrefhttpwwwjarchivecommedia20070709j28jpg",
+"hrefhttpwwwjarchivecommedia20070712dj30jpg",
+"hrefhttpwwwjarchivecommedia20070717j26jpg",
+"hrefhttpwwwjarchivecommedia20070719j24jpg",
+"hrefhttpwwwjarchivecommedia20070724j02jpg",
+"hrefhttpwwwjarchivecommedia20070910dj29jpg",
+"hrefhttpwwwjarchivecommedia20070912j04jpg",
+"hrefhttpwwwjarchivecommedia20070912j04ajpg",
+"hrefhttpwwwjarchivecommedia20070914j04jpg",
+"hrefhttpwwwjarchivecommedia20070921j03jpg",
+"hrefhttpwwwjarchivecommedia20070921dj04jpg",
+"hrefhttpwwwjarchivecommedia20070924j18jpg",
+"hrefhttpwwwjarchivecommedia20070926dj29mp3its",
+"hrefhttpwwwjarchivecommedia20071001j29jpg",
+"hrefhttpwwwjarchivecommedia20071001j29ajpg",
+"hrefhttpwwwjarchivecommedia20071001dj16jpg",
+"hrefhttpwwwjarchivecommedia20071005j13jpg",
+"hrefhttpwwwjarchivecommedia20071005j14jpg",
+"hrefhttpwwwjarchivecommedia20071008j16mp3herea",
+"hrefhttpwwwjarchivecommedia20071016dj08jpg",
+"hrefhttpwwwjarchivecommedia20071018j21jpg",
+"hrefhttpwwwjarchivecommedia20071018j13jpg",
+"hrefhttpwwwjarchivecommedia20071018j25jpg",
+"hrefhttpwwwjarchivecommedia20071024dj09jpg",
+"hrefhttpwwwjarchivecommedia20071030dj03jpg",
+"hrefhttpwwwjarchivecommedia20071030dj03ajpg",
+"hrefhttpwwwjarchivecommedia20071101j15mp3in",
+"hrefhttpwwwjarchivecommedia20071102j12jpg",
+"hrefhttpwwwjarchivecommedia20071102j12ajpg",
+"hrefhttpwwwjarchivecommedia20071102j15jpg",
+"hrefhttpwwwjarchivecommedia20071102j15ajpg",
+"hrefhttpwwwjarchivecommedia20071102dj05jpg",
+"hrefhttpwwwjarchivecommedia20071106dj10jpgalex",
+"hrefhttpwwwjarchivecommedia20071106dj10ajpg",
+"hrefhttpwwwjarchivecommedia20071107dj17wmvjames",
+"hrefhttpwwwjarchivecommedia20071107dj17ajpg",
+"hrefhttpwwwjarchivecommedia20071107dj20wmvjames",
+"hrefhttpwwwjarchivecommedia20071107dj20ajpg",
+"hrefhttpwwwjarchivecommedia20071108dj16jpg",
+"hrefhttpwwwjarchivecommedia20071112j08jpgsarah",
+"hrefhttpwwwjarchivecommedia20071112j16jpg",
+"hrefhttpwwwjarchivecommedia20071112j16ajpg",
+"hrefhttpwwwjarchivecommedia20071113j23mp3my",
+"hrefhttpwwwjarchivecommedia20071120j06jpg",
+"hrefhttpwwwjarchivecommedia20071120j28jpg",
+"hrefhttpwwwjarchivecommedia20071123dj13jpg",
+"hrefhttpwwwjarchivecommedia20071123dj13ajpg",
+"hrefhttpwwwjarchivecommedia20071123dj13bjpg",
+"hrefhttpwwwjarchivecommedia20071128dj26jpg",
+"hrefhttpwwwjarchivecommedia20071129dj01jpg",
+"hrefhttpwwwjarchivecommedia20071129dj02jpg",
+"hrefhttpwwwjarchivecommedia20071130j25mp3herea",
+"hrefhttpwwwjarchivecommedia20071205dj15jpg",
+"hrefhttpwwwjarchivecommedia20071206j23mp3taranto",
+"hrefhttpwwwjarchivecommedia20071207j26jpg",
+"hrefhttpwwwjarchivecommedia20071210dj04jpg",
+"hrefhttpwwwjarchivecommedia20071212j25jpg",
+"hrefhttpwwwjarchivecommedia20071214dj13jpg",
+"hrefhttpwwwjarchivecommedia20071214dj13ajpg",
+"hrefhttpwwwjarchivecommedia20071218dj09jpg",
+"hrefhttpwwwjarchivecommedia20071221dj16jpg",
+"hrefhttpwwwjarchivecommedia20071227j11jpg",
+"hrefhttpwwwjarchivecommedia20071227j12jpg",
+"hrefhttpwwwjarchivecommedia20071227j12ajpg",
+"hrefhttpwwwjarchivecommedia20071231j26jpg",
+"hrefhttpwwwjarchivecommedia20071231j28jpg",
+"hrefhttpwwwjarchivecommedia20071231dj28wmvherea",
+"hrefhttpwwwjarchivecommedia20080102dj27jpg",
+"hrefhttpwwwjarchivecommedia20080102dj27ajpg",
+"hrefhttpwwwjarchivecommedia20080104j02jpg",
+"hrefhttpwwwjarchivecommedia20080104j02ajpg",
+"hrefhttpwwwjarchivecommedia20080104j02bjpg",
+"hrefhttpwwwjarchivecommedia20080108j26jpg",
+"hrefhttpwwwjarchivecommedia20080108j29jpg",
+"hrefhttpwwwjarchivecommedia20080109dj26jpg",
+"hrefhttpwwwjarchivecommedia20080111j03wmvherea",
+"hrefhttpwwwjarchivecommedia20080111j19jpg",
+"hrefhttpwwwjarchivecommedia20080111j19ajpg",
+"hrefhttpwwwjarchivecommedia20080116j16jpg",
+"hrefhttpwwwjarchivecommedia20080116dj07jpg",
+"hrefhttpwwwjarchivecommedia20080117j28jpg",
+"hrefhttpwwwjarchivecommedia20080121dj18jpg",
+"hrefhttpwwwjarchivecommedia20080128j24jpg",
+"hrefhttpwwwjarchivecommedia20080128dj11jpg",
+"hrefhttpwwwjarchivecommedia20080129dj30jpg",
+"hrefhttpwwwjarchivecommedia20080201dj24jpg",
+"hrefhttpwwwjarchivecommedia20080201dj24ajpg",
+"hrefhttpwwwjarchivecommedia20080204j29jpg",
+"hrefhttpwwwjarchivecommedia20080204j29ajpg",
+"hrefhttpwwwjarchivecommedia20080204j29bjpg",
+"hrefhttpwwwjarchivecommedia20080208j05jpg",
+"hrefhttpwwwjarchivecommedia20080208j05ajpg",
+"hrefhttpwwwjarchivecommedia20080212dj20jpg",
+"hrefhttpwwwjarchivecommedia20080213dj12mp3herea",
+"hrefhttpwwwjarchivecommedia20080214dj11jpg",
+"hrefhttpwwwjarchivecommedia20080219j04wmvjimmy",
+"hrefhttpwwwjarchivecommedia20080219j04jpg",
+"hrefhttpwwwjarchivecommedia20080219j04ajpg",
+"hrefhttpwwwjarchivecommedia20080220dj01jpg",
+"hrefhttpwwwjarchivecommedia20080220dj08jpg",
+"hrefhttpwwwjarchivecommedia20080220dj09jpg",
+"hrefhttpwwwjarchivecommedia20080222dj24jpg",
+"hrefhttpwwwjarchivecommedia20080225j04jpg",
+"hrefhttpwwwjarchivecommedia20080229j10jpg",
+"hrefhttpwwwjarchivecommedia20080303j27jpg",
+"hrefhttpwwwjarchivecommedia20080303j17jpg",
+"hrefhttpwwwjarchivecommedia20080303j17ajpg",
+"hrefhttpwwwjarchivecommedia20080304dj22wmvjon",
+"hrefhttpwwwjarchivecommedia20080306dj10jpg",
+"hrefhttpwwwjarchivecommedia20080310dj19jpg",
+"hrefhttpwwwjarchivecommedia20080310dj19ajpg",
+"hrefhttpwwwjarchivecommedia20080402dj20jpg",
+"hrefhttpwwwjarchivecommedia20080403j09ajpg",
+"hrefhttpwwwjarchivecommedia20080403j09jpg",
+"hrefhttpwwwjarchivecommedia20080404dj20jpg",
+"hrefhttpwwwjarchivecommedia20080407j18jpg",
+"hrefhttpwwwjarchivecommedia20080408dj21jpg",
+"hrefhttpwwwjarchivecommedia20080408dj21ajpg",
+"hrefhttpwwwjarchivecommedia20080409j03jpg",
+"hrefhttpwwwjarchivecommedia20080414j08jpg",
+"hrefhttpwwwjarchivecommedia20080421j10jpg",
+"hrefhttpwwwjarchivecommedia20080428dj20wmvkelly",
+"hrefhttpwwwjarchivecommedia20080502dj14jpg",
+"hrefhttpwwwjarchivecommedia20080505j27jpg",
+"hrefhttpwwwjarchivecommedia20080505j10jpg",
+"hrefhttpwwwjarchivecommedia20080506dj08jpg",
+"hrefhttpwwwjarchivecommedia20080506dj08wmvthisa",
+"hrefhttpwwwjarchivecommedia20080508j19mp3iive",
+"hrefhttpwwwjarchivecommedia20080509dj19jpg",
+"hrefhttpwwwjarchivecommedia20080509dj19ajpg",
+"hrefhttpwwwjarchivecommedia20080513dj02jpg",
+"hrefhttpwwwjarchivecommedia20080515dj05jpg",
+"hrefhttpwwwjarchivecommedia20080515dj05ajpg",
+"hrefhttpwwwjarchivecommedia20080515dj15jpg",
+"hrefhttpwwwjarchivecommedia20080515dj15ajpg",
+"hrefhttpwwwjarchivecommedia20080516dj16jpg",
+"hrefhttpwwwjarchivecommedia20080521dj14jpg",
+"hrefhttpwwwjarchivecommedia20080521dj14ajpg",
+"hrefhttpwwwjarchivecommedia20080526j19jpg",
+"hrefhttpwwwjarchivecommedia20080610dj25jpg",
+"hrefhttpwwwjarchivecommedia20080612dj14jpg",
+"hrefhttpwwwjarchivecommedia20080612dj14ajpg",
+"hrefhttpwwwjarchivecommedia20080612dj25jpg",
+"hrefhttpwwwjarchivecommedia20080612dj25ajpg",
+"hrefhttpwwwjarchivecommedia20080613j06jpg",
+"hrefhttpwwwjarchivecommedia20080617j02jpg",
+"hrefhttpwwwjarchivecommedia20080617j02ajpg",
+"hrefhttpwwwjarchivecommedia20080618j01jpg",
+"hrefhttpwwwjarchivecommedia20080620j12jpg",
+"hrefhttpwwwjarchivecommedia20080630dj08jpg",
+"hrefhttpwwwjarchivecommedia20080701j29jpg",
+"hrefhttpwwwjarchivecommedia20080701j29ajpg",
+"hrefhttpwwwjarchivecommedia20080702j13jpg",
+"hrefhttpwwwjarchivecommedia20080707j13jpg",
+"hrefhttpwwwjarchivecommedia20080707j13ajpg",
+"hrefhttpwwwjarchivecommedia20080707j27jpg",
+"hrefhttpwwwjarchivecommedia20080707j27ajpg",
+"hrefhttpwwwjarchivecommedia20080707j27bjpg",
+"hrefhttpwwwjarchivecommedia20080708dj21jpg",
+"hrefhttpwwwjarchivecommedia20080708dj21ajpg",
+"hrefhttpwwwjarchivecommedia20080711j29mp3im",
+"hrefhttpwwwjarchivecommedia20080711j30jpg",
+"hrefhttpwwwjarchivecommedia20080711j30ajpg",
+"hrefhttpwwwjarchivecommedia20080714dj05jpg",
+"hrefhttpwwwjarchivecommedia20080722dj25wmvjimmy",
+"hrefhttpwwwjarchivecommedia20080723j02jpg",
+"hrefhttpwwwjarchivecommedia20080723j02ajpg",
+"hrefhttpwwwjarchivecommedia20080723j20jpg",
+"hrefhttpwwwjarchivecommedia20080723j20ajpg",
+"hrefhttpwwwjarchivecommedia20080723j20bjpg",
+"hrefhttpwwwjarchivecommedia20080724j26jpg",
+"hrefhttpwwwjarchivecommedia20080724j26ajpg",
+"hrefhttpwwwjarchivecommedia20080724j26bjpg",
+"hrefhttpwwwjarchivecommedia20080908j26wmvdebuta",
+"hrefhttpwwwjarchivecommedia20080908j26jpg",
+"hrefhttpwwwjarchivecommedia20080908j30jpg",
+"hrefhttpwwwjarchivecommedia20080908j30ajpg",
+"hrefhttpwwwjarchivecommedia20080912dj20wmvjimmy",
+"hrefhttpwwwjarchivecommedia20080912dj20jpg",
+"hrefhttpwwwjarchivecommedia20080916dj28jpg",
+"hrefhttpwwwjarchivecommedia20080918dj06jpg",
+"hrefhttpwwwjarchivecommedia20080918dj06wmvelectromagnetic",
+"hrefhttpwwwjarchivecommedia20080922dj30jpg",
+"hrefhttpwwwjarchivecommedia20080922dj30ajpg",
+"hrefhttpwwwjarchivecommedia20080923j17jpg",
+"hrefhttpwwwjarchivecommedia20080923dj11wmvcheryl",
+"hrefhttpwwwjarchivecommedia20080926dj02jpg",
+"hrefhttpwwwjarchivecommedia20080929j13jpg",
+"hrefhttpwwwjarchivecommedia20080929j13ajpg",
+"hrefhttpwwwjarchivecommedia20080929j13bjpg",
+"hrefhttpwwwjarchivecommedia20080929j14jpg",
+"hrefhttpwwwjarchivecommedia20080929j14ajpg",
+"hrefhttpwwwjarchivecommedia20080929dj21jpg",
+"hrefhttpwwwjarchivecommedia20080929dj22jpg",
+"hrefhttpwwwjarchivecommedia20081001j20jpg",
+"hrefhttpwwwjarchivecommedia20081007j27jpg",
+"hrefhttpwwwjarchivecommedia20081010j08wmvthisa",
+"hrefhttpwwwjarchivecommedia20081013j27jpg",
+"hrefhttpwwwjarchivecommedia20081013j27ajpg",
+"hrefhttpwwwjarchivecommedia20081013j28jpg",
+"hrefhttpwwwjarchivecommedia20081014dj25jpg",
+"hrefhttpwwwjarchivecommedia20081014dj25ajpg",
+"hrefhttpwwwjarchivecommedia20081017j26jpg",
+"hrefhttpwwwjarchivecommedia20081017dj19jpg",
+"hrefhttpwwwjarchivecommedia20081020j22wmvjon",
+"hrefhttpwwwjarchivecommedia20081020j22jpg",
+"hrefhttpwwwjarchivecommedia20081021j30jpg",
+"hrefhttpwwwjarchivecommedia20081023j03jpg",
+"hrefhttpwwwjarchivecommedia20081023j03ajpg",
+"hrefhttpwwwjarchivecommedia20081023j03bjpg",
+"hrefhttpwwwjarchivecommedia20081024j05jpg",
+"hrefhttpwwwjarchivecommedia20081024j06jpg",
+"hrefhttpwwwjarchivecommedia20081024j24jpg",
+"hrefhttpwwwjarchivecommedia20081027dj07mp3a",
+"hrefhttpwwwjarchivecommedia20081028j10wmvthisa",
+"hrefhttpwwwjarchivecommedia20081028dj21wmvsarah",
+"hrefhttpwwwjarchivecommedia20081028dj21ajpg",
+"hrefhttpwwwjarchivecommedia20081104j14jpg",
+"hrefhttpwwwjarchivecommedia20081104j14ajpg",
+"hrefhttpwwwjarchivecommedia20081104dj04jpg",
+"hrefhttpwwwjarchivecommedia20081110dj13jpg",
+"hrefhttpwwwjarchivecommedia20081110dj13ajpg",
+"hrefhttpwwwjarchivecommedia20081114j21jpg",
+"hrefhttpwwwjarchivecommedia20081114dj01jpg",
+"hrefhttpwwwjarchivecommedia20081114dj01ajpg",
+"hrefhttpwwwjarchivecommedia20081118j28wmvherea",
+"hrefhttpwwwjarchivecommedia20081119dj06wmvjon",
+"hrefhttpwwwjarchivecommedia20081121dj01wmvtomba",
+"hrefhttpwwwjarchivecommedia20081121dj18wmvthesea",
+"hrefhttpwwwjarchivecommedia20081125dj13jpg",
+"hrefhttpwwwjarchivecommedia20081126j28jpg",
+"hrefhttpwwwjarchivecommedia20081127j09jpg",
+"hrefhttpwwwjarchivecommedia20081202j03jpg",
+"hrefhttpwwwjarchivecommedia20081202j25jpg",
+"hrefhttpwwwjarchivecommedia20081204dj19jpg",
+"hrefhttpwwwjarchivecommedia20081215j03jpg",
+"hrefhttpwwwjarchivecommedia20081215j04jpg",
+"hrefhttpwwwjarchivecommedia20081217j24jpg",
+"hrefhttpwwwjarchivecommedia20081217j24ajpg",
+"hrefhttpwwwjarchivecommedia20081218j04jpg",
+"hrefhttpwwwjarchivecommedia20081222j13mp3if",
+"hrefhttpwwwjarchivecommedia20081226j08jpg",
+"hrefhttpwwwjarchivecommedia20081229j28jpg",
+"hrefhttpwwwjarchivecommedia20090101j08mp3tomthat",
+"hrefhttpwwwjarchivecommedia20090101dj30jpg",
+"hrefhttpwwwjarchivecommedia20090102j12jpg",
+"hrefhttpwwwjarchivecommedia20090102j12ajpg",
+"hrefhttpwwwjarchivecommedia20090105j22wmvdr",
+"hrefhttpwwwjarchivecommedia20090105dj01bjpg",
+"hrefhttpwwwjarchivecommedia20090105dj01jpg",
+"hrefhttpwwwjarchivecommedia20090105dj01ajpg",
+"hrefhttpwwwjarchivecommedia20090107dj07jpg",
+"hrefhttpwwwjarchivecommedia20090109dj26jpg",
+"hrefhttpwwwjarchivecommedia20090112j28jpg",
+"hrefhttpwwwjarchivecommedia20090113j30jpg",
+"hrefhttpwwwjarchivecommedia20090114j05wmvmany",
+"hrefhttpwwwjarchivecommedia20090116j28jpg",
+"hrefhttpwwwjarchivecommedia20090116j30jpg",
+"hrefhttpwwwjarchivecommedia20090121dj08jpg",
+"hrefhttpwwwjarchivecommedia20090121dj08ajpg",
+"hrefhttpwwwjarchivecommedia20090121dj09jpg",
+"hrefhttpwwwjarchivecommedia20090122j16jpg",
+"hrefhttpwwwjarchivecommedia20090122dj17mp3makin",
+"hrefhttpwwwjarchivecommedia20090127j14ajpg",
+"hrefhttpwwwjarchivecommedia20090127j14jpg",
+"hrefhttpwwwjarchivecommedia20090128j28jpg",
+"hrefhttpwwwjarchivecommedia20090129dj28jpg",
+"hrefhttpwwwjarchivecommedia20090202j18jpg",
+"hrefhttpwwwjarchivecommedia20090202j18ajpg",
+"hrefhttpwwwjarchivecommedia20090202j20wmvsarah",
+"hrefhttpwwwjarchivecommedia20090206dj21wmvjon",
+"hrefhttpwwwjarchivecommedia20090210j10jpg",
+"hrefhttpwwwjarchivecommedia20090211j08jpg",
+"hrefhttpwwwjarchivecommedia20090211dj13jpg",
+"hrefhttpwwwjarchivecommedia20090211dj13bjpg",
+"hrefhttpwwwjarchivecommedia20090211dj14jpg",
+"hrefhttpwwwjarchivecommedia20090211dj14ajpg",
+"hrefhttpwwwjarchivecommedia20090212dj04jpg",
+"hrefhttpwwwjarchivecommedia20090219j16jpg",
+"hrefhttpwwwjarchivecommedia20090226dj28jpg",
+"hrefhttpwwwjarchivecommedia20090226dj28ajpg",
+"hrefhttpwwwjarchivecommedia20090226dj28bjpg",
+"hrefhttpwwwjarchivecommedia20090302dj22jpg",
+"hrefhttpwwwjarchivecommedia20090303dj11jpg",
+"hrefhttpwwwjarchivecommedia20090306j04jpg",
+"hrefhttpwwwjarchivecommedia20090306dj14jpg",
+"hrefhttpwwwjarchivecommedia20090306dj14ajpg",
+"hrefhttpwwwjarchivecommedia20090311dj26jpg",
+"hrefhttpwwwjarchivecommedia20090311dj26ajpg",
+"hrefhttpwwwjarchivecommedia20090312j28wmvalex",
+"hrefhttpwwwjarchivecommedia20090312j22jpg",
+"hrefhttpwwwjarchivecommedia20090313dj13wmvsarah",
+"hrefhttpwwwjarchivecommedia20090313dj11jpg",
+"hrefhttpwwwjarchivecommedia20090317dj20jpg",
+"hrefhttpwwwjarchivecommedia20090319dj27jpg",
+"hrefhttpwwwjarchivecommedia20090323dj21jpg",
+"hrefhttpwwwjarchivecommedia20090326j23jpg",
+"hrefhttpwwwjarchivecommedia20090326j25jpg",
+"hrefhttpwwwjarchivecommedia20090330dj24jpg",
+"hrefhttpwwwjarchivecommedia20090330dj05jpg",
+"hrefhttpwwwjarchivecommedia20090330dj05ajpg",
+"hrefhttpwwwjarchivecommedia20090331j18jpg",
+"hrefhttpwwwjarchivecommedia20090401j04jpg",
+"hrefhttpwwwjarchivecommedia20090401dj20jpg",
+"hrefhttpwwwjarchivecommedia20090427j22wmvsomethinga",
+"hrefhttpwwwjarchivecommedia20090427j02mp3herea",
+"hrefhttpwwwjarchivecommedia20090505dj23jpg",
+"hrefhttpwwwjarchivecommedia20090506dj24jpg",
+"hrefhttpwwwjarchivecommedia20090506dj24ajpg",
+"hrefhttpwwwjarchivecommedia20090511j10jpg",
+"hrefhttpwwwjarchivecommedia20090511j10wmvthisa",
+"hrefhttpwwwjarchivecommedia20090515dj29jpg",
+"hrefhttpwwwjarchivecommedia20090515dj29ajpg",
+"hrefhttpwwwjarchivecommedia20090518j09jpg",
+"hrefhttpwwwjarchivecommedia20090518j09ajpg",
+"hrefhttpwwwjarchivecommedia20090518j19jpg",
+"hrefhttpwwwjarchivecommedia20090518j19ajpg",
+"hrefhttpwwwjarchivecommedia20090520dj29jpg",
+"hrefhttpwwwjarchivecommedia20090520dj29ajpg",
+"hrefhttpwwwjarchivecommedia20090520dj29bjpg",
+"hrefhttpwwwjarchivecommedia20090522j26wmvmr",
+"hrefhttpwwwjarchivecommedia20090522j27jpg",
+"hrefhttpwwwjarchivecommedia20090525j26wmvjimmy",
+"hrefhttpwwwjarchivecommedia20090525j27wmvjimmy",
+"hrefhttpwwwjarchivecommedia20090601j19jpg",
+"hrefhttpwwwjarchivecommedia20090601dj24jpg",
+"hrefhttpwwwjarchivecommedia20090602dj15jpg",
+"hrefhttpwwwjarchivecommedia20090603dj26mp3youve",
+"hrefhttpwwwjarchivecommedia20090615dj27wmvkelly",
+"hrefhttpwwwjarchivecommedia20090616dj23wmvsarah",
+"hrefhttpwwwjarchivecommedia20090616dj19jpg",
+"hrefhttpwwwjarchivecommedia20090624j18jpg",
+"hrefhttpwwwjarchivecommedia20090708j10jpg",
+"hrefhttpwwwjarchivecommedia20090713dj27jpg",
+"hrefhttpwwwjarchivecommedia20090713dj27ajpg",
+"hrefhttpwwwjarchivecommedia20090716j06jpg",
+"hrefhttpwwwjarchivecommedia20090716j06ajpg",
+"hrefhttpwwwjarchivecommedia20090721dj03jpg",
+"hrefhttpwwwjarchivecommedia20090722dj05jpg",
+"hrefhttpwwwjarchivecommedia20090722dj05ajpg",
+"hrefhttpwwwjarchivecommedia20090723dj26jpg",
+"hrefhttpwwwjarchivecommedia20090916j21jpg",
+"hrefhttpwwwjarchivecommedia20090916j28jpg",
+"hrefhttpwwwjarchivecommedia20090916j19wmvjimmy",
+"hrefhttpwwwjarchivecommedia20090918j19jpg",
+"hrefhttpwwwjarchivecommedia20090918j19ajpg",
+"hrefhttpwwwjarchivecommedia20090918j16jpg",
+"hrefhttpwwwjarchivecommedia20090925j15jpg",
+"hrefhttpwwwjarchivecommedia20090925dj14jpg",
+"hrefhttpwwwjarchivecommedia20090925dj14ajpg",
+"hrefhttpwwwjarchivecommedia20090928j15jpg",
+"hrefhttpwwwjarchivecommedia20090928j15ajpg",
+"hrefhttpwwwjarchivecommedia20090928dj26wmvthisa",
+"hrefhttpwwwjarchivecommedia20090928dj08wmvherea",
+"hrefhttpwwwjarchivecommedia20090929j29jpg",
+"hrefhttpwwwjarchivecommedia20090930j06wmvthisa",
+"hrefhttpwwwjarchivecommedia20091006dj22wmvsarah",
+"hrefhttpwwwjarchivecommedia20091009j22wmvkelly",
+"hrefhttpwwwjarchivecommedia20091013j02mp3mr",
+"hrefhttpwwwjarchivecommedia20091016dj10jpg",
+"hrefhttpwwwjarchivecommedia20091027j18jpg",
+"hrefhttpwwwjarchivecommedia20091027j30wmvjimmy",
+"hrefhttpwwwjarchivecommedia20091028j19wmvjimmy",
+"hrefhttpwwwjarchivecommedia20091028j19jpg",
+"hrefhttpwwwjarchivecommedia20091029j30jpg",
+"hrefhttpwwwjarchivecommedia20091127j01mp3hey",
+"hrefhttpwwwjarchivecommedia20091202dj15jpg",
+"hrefhttpwwwjarchivecommedia20091202dj15ajpg",
+"hrefhttpwwwjarchivecommedia20091203j04jpg",
+"hrefhttpwwwjarchivecommedia20091203j04ajpg",
+"hrefhttpwwwjarchivecommedia20091204j06wmvjimmy",
+"hrefhttpwwwjarchivecommedia20091207dj27wmvherea",
+"hrefhttpwwwjarchivecommedia20091210dj28jpg",
+"hrefhttpwwwjarchivecommedia20091211j10jpg",
+"hrefhttpwwwjarchivecommedia20091211j23jpg",
+"hrefhttpwwwjarchivecommedia20091216dj03jpg",
+"hrefhttpwwwjarchivecommedia20091216dj03wmvturning",
+"hrefhttpwwwjarchivecommedia20091217j19jpg",
+"hrefhttpwwwjarchivecommedia20091223dj26jpg",
+"hrefhttpwwwjarchivecommedia20091230dj15jpg",
+"hrefhttpwwwjarchivecommedia20091231j24jpg",
+"hrefhttpwwwjarchivecommedia20100111j01wmvthisa",
+"hrefhttpwwwjarchivecommedia20100111j03wmvthisa",
+"hrefhttpwwwjarchivecommedia20100112dj16wmvkelly",
+"hrefhttpwwwjarchivecommedia20100113j11jpg",
+"hrefhttpwwwjarchivecommedia20100114dj24jpg",
+"hrefhttpwwwjarchivecommedia20100121j27jpg",
+"hrefhttpwwwjarchivecommedia20100125j10jpg",
+"hrefhttpwwwjarchivecommedia20100125j25bjpg",
+"hrefhttpwwwjarchivecommedia20100127dj03wmvhomea",
+"hrefhttpwwwjarchivecommedia20100128dj06jpg",
+"hrefhttpwwwjarchivecommedia20100211j14jpg",
+"hrefhttpwwwjarchivecommedia20100215dj15jpg",
+"hrefhttpwwwjarchivecommedia20100217j22jpg",
+"hrefhttpwwwjarchivecommedia20100218dj25jpg",
+"hrefhttpwwwjarchivecommedia20100218dj25ajpg",
+"hrefhttpwwwjarchivecommedia20100223j04jpg",
+"hrefhttpwwwjarchivecommedia20100223j14jpg",
+"hrefhttpwwwjarchivecommedia20100224j11mp3ill",
+"hrefhttpwwwjarchivecommedia20100225dj23jpg",
+"hrefhttpwwwjarchivecommedia20100302j28jpg",
+"hrefhttpwwwjarchivecommedia20100309j16jpg",
+"hrefhttpwwwjarchivecommedia20100309j18jpg",
+"hrefhttpwwwjarchivecommedia20100310j21wmvalex",
+"hrefhttpwwwjarchivecommedia20100310j21ajpg",
+"hrefhttpwwwjarchivecommedia20100310j25jpg",
+"hrefhttpwwwjarchivecommedia20100310j25ajpg",
+"hrefhttpwwwjarchivecommedia20100316j06mp3it",
+"hrefhttpwwwjarchivecommedia20100322j05jpg",
+"hrefhttpwwwjarchivecommedia20100323dj05jpg",
+"hrefhttpwwwjarchivecommedia20100324j13jpg",
+"hrefhttpwwwjarchivecommedia20100326j04jpg",
+"hrefhttpwwwjarchivecommedia20100329dj08jpg",
+"hrefhttpwwwjarchivecommedia20100329dj15wmviare",
+"hrefhttpwwwjarchivecommedia20100331j06jpg",
+"hrefhttpwwwjarchivecommedia20100331dj20jpg",
+"hrefhttpwwwjarchivecommedia20100402dj01jpg",
+"hrefhttpwwwjarchivecommedia20100406dj18jpg",
+"hrefhttpwwwjarchivecommedia20100419j07jpg",
+"hrefhttpwwwjarchivecommedia20100419j21jpg",
+"hrefhttpwwwjarchivecommedia20100419dj07jpg",
+"hrefhttpwwwjarchivecommedia20100426j21jpg",
+"hrefhttpwwwjarchivecommedia20100426j21ajpg",
+"hrefhttpwwwjarchivecommedia20100428j25mp3herea",
+"hrefhttpwwwjarchivecommedia20100429dj14wmvitas",
+"hrefhttpwwwjarchivecommedia20100514dj29wmvdr",
+"hrefhttpwwwjarchivecommedia20100514dj07mp3on",
+"hrefhttpwwwjarchivecommedia20100514dj15mp3cathy",
+"hrefhttpwwwjarchivecommedia20100518dj26jpg",
+"hrefhttpwwwjarchivecommedia20100520j26jpg",
+"hrefhttpwwwjarchivecommedia20100520j30jpg",
+"hrefhttpwwwjarchivecommedia20100520j30ajpg",
+"hrefhttpwwwjarchivecommedia20100531j11jpg",
+"hrefhttpwwwjarchivecommedia20100604dj12wmvkelly",
+"hrefhttpwwwjarchivecommedia20100604dj12ajpg",
+"hrefhttpwwwjarchivecommedia20100608dj15jpg",
+"hrefhttpwwwjarchivecommedia20100611j29wmvthisa",
+"hrefhttpwwwjarchivecommedia20100611j05jpg",
+"hrefhttpwwwjarchivecommedia20100611j05ajpg",
+"hrefhttpwwwjarchivecommedia20100616dj09jpg",
+"hrefhttpwwwjarchivecommedia20100616dj11jpg",
+"hrefhttpwwwjarchivecommedia20100621j20jpg",
+"hrefhttpwwwjarchivecommedia20100621dj22wmvkelly",
+"hrefhttpwwwjarchivecommedia20100622dj01mp3me",
+"hrefhttpwwwjarchivecommedia20100622dj20wmvsarah",
+"hrefhttpwwwjarchivecommedia20100623j01mp3and",
+"hrefhttpwwwjarchivecommedia20100628dj14jpg",
+"hrefhttpwwwjarchivecommedia20100629j08jpg",
+"hrefhttpwwwjarchivecommedia20100701dj23jpg",
+"hrefhttpwwwjarchivecommedia20100705j23wmvherea",
+"hrefhttpwwwjarchivecommedia20100705j27wmvherea",
+"hrefhttpwwwjarchivecommedia20100708dj21jpg",
+"hrefhttpwwwjarchivecommedia20100709j07jpg",
+"hrefhttpwwwjarchivecommedia20100709j07ajpg",
+"hrefhttpwwwjarchivecommedia20100709dj10jpg",
+"hrefhttpwwwjarchivecommedia20100714dj19wmvsarah",
+"hrefhttpwwwjarchivecommedia20100720dj21jpg",
+"hrefhttpwwwjarchivecommedia20100720dj22jpg",
+"hrefhttpwwwjarchivecommedia20100720dj22ajpg",
+"hrefhttpwwwjarchivecommedia20100722j11jpg",
+"hrefhttpwwwjarchivecommedia20100728j17jpg",
+"hrefhttpwwwjarchivecommedia20100914j30jpg",
+"hrefhttpwwwjarchivecommedia20100915dj22jpg",
+"hrefhttpwwwjarchivecommedia20100917dj04jpg",
+"hrefhttpwwwjarchivecommedia20100917dj04ajpg",
+"hrefhttpwwwjarchivecommedia20100917dj04bjpg",
+"hrefhttpwwwjarchivecommedia20100923dj25jpg",
+"hrefhttpwwwjarchivecommedia20100928j19wmvsarah",
+"hrefhttpwwwjarchivecommedia20100929dj17jpg",
+"hrefhttpwwwjarchivecommedia20100930dj21jpg",
+"hrefhttpwwwjarchivecommedia20101004j10ajpg",
+"hrefhttpwwwjarchivecommedia20101004j10bjpg",
+"hrefhttpwwwjarchivecommedia20101005dj08wmvsarah",
+"hrefhttpwwwjarchivecommedia20101006dj15wmvalex",
+"hrefhttpwwwjarchivecommedia20101013j30wmvtom",
+"hrefhttpwwwjarchivecommedia20101019dj12jpg",
+"hrefhttpwwwjarchivecommedia20101020j11mp3herea",
+"hrefhttpwwwjarchivecommedia20101021dj11wmvchristopher",
+"hrefhttpwwwjarchivecommedia20101022j26jpg",
+"hrefhttpwwwjarchivecommedia20101029dj26wmvjimmy",
+"hrefhttpwwwjarchivecommedia20101105j15wmvsarah",
+"hrefhttpwwwjarchivecommedia20101118dj13jpg",
+"hrefhttpwwwjarchivecommedia20101119j04jpg",
+"hrefhttpwwwjarchivecommedia20101119j04ajpg",
+"hrefhttpwwwjarchivecommedia20101124j11jpg",
+"hrefhttpwwwjarchivecommedia20101201dj19jpg",
+"hrefhttpwwwjarchivecommedia20101201dj20jpg",
+"hrefhttpwwwjarchivecommedia20101201dj20ajpg",
+"hrefhttpwwwjarchivecommedia20101210dj12jpg",
+"hrefhttpwwwjarchivecommedia20101210dj12ajpg",
+"hrefhttpwwwjarchivecommedia20101214j08mp3thisa",
+"hrefhttpwwwjarchivecommedia20101214j08mp3",
+"hrefhttpwwwjarchivecommedia20101221dj07jpg",
+"hrefhttpwwwjarchivecommedia20101222dj01jpg",
+"hrefhttpwwwjarchivecommedia20101229dj07jpg",
+"hrefhttpwwwjarchivecommedia20110110dj01jpg",
+"hrefhttpwwwjarchivecommedia20110110dj01ajpg",
+"hrefhttpwwwjarchivecommedia20110112j02mp3thisa",
+"hrefhttpwwwjarchivecommedia20110118dj22jpg",
+"hrefhttpwwwjarchivecommedia20110120j23jpg",
+"hrefhttpwwwjarchivecommedia20110120j23ajpg",
+"hrefhttpwwwjarchivecommedia20110126dj12jpg",
+"hrefhttpwwwjarchivecommedia20110126dj14jpg",
+"hrefhttpwwwjarchivecommedia20110126dj15wmvkelly",
+"hrefhttpwwwjarchivecommedia20110127j24mp3herea",
+"hrefhttpwwwjarchivecommedia20110127dj15jpg",
+"hrefhttpwwwjarchivecommedia20110128dj13jpg",
+"hrefhttpwwwjarchivecommedia20110202j03wmvjimmy",
+"hrefhttpwwwjarchivecommedia20110202j03ajpg",
+"hrefhttpwwwjarchivecommedia20110211dj16jpg",
+"hrefhttpwwwjarchivecommedia20110222dj03jpg",
+"hrefhttpwwwjarchivecommedia20110302dj23jpg",
+"hrefhttpwwwjarchivecommedia20110302dj23ajpg",
+"hrefhttpwwwjarchivecommedia20110304j26jpg",
+"hrefhttpwwwjarchivecommedia20110304dj08jpg",
+"hrefhttpwwwjarchivecommedia20110309dj29jpg",
+"hrefhttpwwwjarchivecommedia20110309dj29ajpg",
+"hrefhttpwwwjarchivecommedia20110311dj23wmvjimmy",
+"hrefhttpwwwjarchivecommedia20110316j22wmvdoinga",
+"hrefhttpwwwjarchivecommedia20110317dj07jpg",
+"hrefhttpwwwjarchivecommedia20110318j16jpg",
+"hrefhttpwwwjarchivecommedia20110322dj20jpg",
+"hrefhttpwwwjarchivecommedia20110323dj29wmvsarah",
+"hrefhttpwwwjarchivecommedia20110324dj15wmvsarah",
+"hrefhttpwwwjarchivecommedia20110328j05jpg",
+"hrefhttpwwwjarchivecommedia20110328dj18jpg",
+"hrefhttpwwwjarchivecommedia20110330dj28jpg",
+"hrefhttpwwwjarchivecommedia20110330dj28ajpg",
+"hrefhttpwwwjarchivecommedia20110405j14jpg",
+"hrefhttpwwwjarchivecommedia20110406j09jpg",
+"hrefhttpwwwjarchivecommedia20110412j02jpg",
+"hrefhttpwwwjarchivecommedia20110414dj29wmvthisa",
+"hrefhttpwwwjarchivecommedia20110418j05jpg",
+"hrefhttpwwwjarchivecommedia20110418j05ajpg",
+"hrefhttpwwwjarchivecommedia20110420j29mp3thisa",
+"hrefhttpwwwjarchivecommedia20110426j23jpg",
+"hrefhttpwwwjarchivecommedia20110427j19jpg",
+"hrefhttpwwwjarchivecommedia20110509j04jpg",
+"hrefhttpwwwjarchivecommedia20110509j04ajpg",
+"hrefhttpwwwjarchivecommedia20110509dj03jpg",
+"hrefhttpwwwjarchivecommedia20110509dj03ajpg",
+"hrefhttpwwwjarchivecommedia20110511j15jpg",
+"hrefhttpwwwjarchivecommedia20110516dj27jpg",
+"hrefhttpwwwjarchivecommedia20110517j30wmvthis",
+"hrefhttpwwwjarchivecommedia20110520dj27ajpg",
+"hrefhttpwwwjarchivecommedia20110520dj27jpg",
+"hrefhttpwwwjarchivecommedia20110520dj28ajpg",
+"hrefhttpwwwjarchivecommedia20110520dj28jpg",
+"hrefhttpwwwjarchivecommedia20110520dj29wmvjimmy",
+"hrefhttpwwwjarchivecommedia20110523j11jpg",
+"hrefhttpwwwjarchivecommedia20110523j26mp3hea",
+"hrefhttpwwwjarchivecommedia20110523dj27jpg",
+"hrefhttpwwwjarchivecommedia20110523dj27ajpg",
+"hrefhttpwwwjarchivecommedia20110524j04wmvhere",
+"hrefhttpwwwjarchivecommedia20110525j28jpg",
+"hrefhttpwwwjarchivecommedia20110525j29jpg",
+"hrefhttpwwwjarchivecommedia20110527j27jpg",
+"hrefhttpwwwjarchivecommedia20110527j27ajpg",
+"hrefhttpwwwjarchivecommedia20110527j28jpg",
+"hrefhttpwwwjarchivecommedia20110527j29jpg",
+"hrefhttpwwwjarchivecommedia20110602j13jpg",
+"hrefhttpwwwjarchivecommedia20110606j20wmvthisa",
+"hrefhttpwwwjarchivecommedia20110607j13mp3herea",
+"hrefhttpwwwjarchivecommedia20110608j24jpg",
+"hrefhttpwwwjarchivecommedia20110609dj05jpg",
+"hrefhttpwwwjarchivecommedia20110610j30jpg",
+"hrefhttpwwwjarchivecommedia20110615j01jpg",
+"hrefhttpwwwjarchivecommedia20110615j01ajpg",
+"hrefhttpwwwjarchivecommedia20110620dj15jpg",
+"hrefhttpwwwjarchivecommedia20110620dj15ajpg",
+"hrefhttpwwwjarchivecommedia20110621j27wmvherea",
+"hrefhttpwwwjarchivecommedia20110623dj19jpg",
+"hrefhttpwwwjarchivecommedia20110623dj19ajpg",
+"hrefhttpwwwjarchivecommedia20110629j08wmvsarah",
+"hrefhttpwwwjarchivecommedia20110704j26mp3thisa",
+"hrefhttpwwwjarchivecommedia20110704j26amp3hereas",
+"hrefhttpwwwjarchivecommedia20110708j06jpg",
+"hrefhttpwwwjarchivecommedia20110715j28jpg",
+"hrefhttpwwwjarchivecommedia20110715j29wmvsarah",
+"hrefhttpwwwjarchivecommedia20110722dj09jpg",
+"hrefhttpwwwjarchivecommedia20110722dj09ajpg",
+"hrefhttpwwwjarchivecommedia20110725dj15jpg",
+"hrefhttpwwwjarchivecommedia20110728j08jpg",
+"hrefhttpwwwjarchivecommedia20110728dj25wmvkelly",
+"hrefhttpwwwjarchivecommedia20110922j03jpg",
+"hrefhttpwwwjarchivecommedia20110922j03ajpg",
+"hrefhttpwwwjarchivecommedia20110926dj23jpg",
+"hrefhttpwwwjarchivecommedia20110926dj23ajpg",
+"hrefhttpwwwjarchivecommedia20110927dj14jpg",
+"wwwwatchtowerorg",
+"hrefhttpwwwjarchivecommedia20111007j12jpg",
+"hrefhttpwwwjarchivecommedia20111007j12ajpg",
+"hrefhttpwwwjarchivecommedia20111007j17jpg",
+"hrefhttpwwwjarchivecommedia20111007j17ajpg",
+"hrefhttpwwwjarchivecommedia20111010j05jpg",
+"hrefhttpwwwjarchivecommedia20111013dj18jpg",
+"hrefhttpwwwjarchivecommedia20111014dj23wmvkelly",
+"hrefhttpwwwjarchivecommedia20111018dj02jpg",
+"hrefhttpwwwjarchivecommedia20111018dj02ajpg",
+"hrefhttpwwwjarchivecommedia20111018dj02bjpg",
+"hrefhttpwwwjarchivecommedia20111019dj05jpg",
+"hrefhttpwwwjarchivecommedia20111024j26jpg",
+"hrefhttpwwwjarchivecommedia20111024j26ajpg",
+"hrefhttpwwwjarchivecommedia20111024j26bjpg",
+"hrefhttpwwwjarchivecommedia20111024j11jpg",
+"hrefhttpwwwjarchivecommedia20111025j27wmvkelly",
+"hrefhttpwwwjarchivecommedia20111031j26jpg",
+"hrefhttpwwwjarchivecommedia20111107j26jpg",
+"hrefhttpwwwjarchivecommedia20111107j26ajpg",
+"hrefhttpwwwjarchivecommedia20111107dj03jpg",
+"hrefhttpwwwjarchivecommedia20111109dj05jpg",
+"hrefhttpwwwjarchivecommedia20111109dj05ajpg",
+"hrefhttpwwwjarchivecommedia20111114j24jpg",
+"hrefhttpwwwjarchivecommedia20111123dj17jpg",
+"hrefhttpwwwjarchivecommedia20111123dj08jpg",
+"hrefhttpwwwjarchivecommedia20111129dj13wmvsarah",
+"hrefhttpwwwjarchivecommedia20111130j27jpg",
+"hrefhttpwwwjarchivecommedia20111130j27ajpg",
+"hrefhttpwwwjarchivecommedia20111206j28jpg",
+"hrefhttpwwwjarchivecommedia20111206j27jpg",
+"hrefhttpwwwjarchivecommedia20111214dj20wmvjimmy",
+"hrefhttpwwwjarchivecommedia20111222dj28jpg",
+"hrefhttpwwwjarchivecommedia20111226dj08jpg",
+"hrefhttpwwwjarchivecommedia20111230j08jpg",
+"hrefhttpwwwjarchivecommedia20111230j10jpg",
+"hrefhttpwwwjarchivecommedia20120103dj03jpg",
+"hrefhttpwwwjarchivecommedia20120106j12jpg",
+"hrefhttpwwwjarchivecommedia20120109dj17jpg",
+"hrefhttpwwwjarchivecommedia20120111dj27jpg",
+"hrefhttpwwwjarchivecommedia20120111dj30jpg",
+"hrefhttpwwwjarchivecommedia20120112dj21jpg",
+"hrefhttpwwwjarchivecommedia20120117dj22jpg",
+"hrefhttpwwwjarchivecommedia20120117dj23jpg",
+"hrefhttpwwwjarchivecommedia20120117dj25jpg",
+"hrefhttpwwwjarchivecommedia20120123dj17jpg", 
+"hrefhttpwwwjarchivecommedia20060322j24mp3the"
+)
+```
+
+I want it so that if the term matches any of the values in stop words or the words_to_remove, then it will not be included into the list of terms.
+
+```{r}
+better_list_of_term_used = list()
+
+better_criteria = function(character) {
+  holder = list()
+  
+  for (c in character) {
+    words = str_split(c, " ")[[1]]
+    
+    for (word in words) {
+      if (!word %in% words_to_remove & !word %in% stop_words) {
+        holder = c(holder, word)
+      } 
+    }
+  }
+  return(holder)
+} 
+
+
+holding <- lapply(questions, better_criteria) # Took 7 seconds
+unhold = unlist(holding)
+unhold = unique(unhold) # Done to avoid multiple replicates of the same word 
+
+for (word in unhold) {
+	
+	better_list_of_term_used = c(better_list_of_term_used, word)
+
+}
+
+View(better_list_of_term_used) # Took 20 secs to run
+```
+
+STEP 7: High & Low Value 
+
+With this method, I wanted to be able to go down through a list of terms found in step 6 and see the count of the number of questions that are high value (i.e. $800 +) or low value (i.e. less than $800). 
+
+So ultimately, how I would like to achieve this is by:
+
+A) create some kind of count for both high value and low value 
+	
+	n_high = 0
+	n_low = 0
+
+
+B) defining the cutoff and create a consequence for meeting / not meeting cutoff... likely through some kind of if statement function
+
+	if (term FROM term_used %in% question & value[associated with the question] >= 800) {
+		n_high = n_high + 1
+        } else {
+		n_low = n_low + 1
+        }
+
+C) considering that the question is likely represented by a sentence within a single string, I need to be able to break it up. This needs to be iterated for each question statement
+
+	for (q in question) {
+		word <- str_split(q, " ")[[1]]
+	}
+	
+D) reorganize all of this to some coherent for loop and store everything into a kind of dataframe for ease in analysis
+
+
+Based on these steps, I would expect the turn out to look something like this:
+
+*NOTE: I'm going to use the terms found in term_used. I will also be presenting two ways of going about this. I would figure one way would be reasonable with a smaller number of terms used, but with the entire term list, may not be feasible. So plan on using the "create a new function + lapply" method for the other option.  
+
+```{r}
+
+values = jeopardy$value 
+
+value_count_data = NULL
+
+for (term in term_used[1:50]) {
+  
+  n_high = 0
+  n_low = 0
+  
+  for (i in 1:length(questions)) {
+    
+    split_sentence = str_split(questions[i], " ") [[1]]
+    
+    if (term %in% split_sentence & values[i] >= 800) {
+      
+      n_high = n_high + 1
+      
+    } else if (term %in% split_sentence & values[i] < 800) {
+      
+      n_low = n_low + 1
+      
+    }
+    
+  }
+  
+  test = chisq.test(c(n_high, n_low), p = c(2/5, 3/5))
+  new_row = c(term, n_high, n_low, test$p.value)
+  
+  value_count_data = rbind(value_count_data, new_row)
+  
+}
+
+
+colnames(value_count_data) = c('term', 'high_count', 'low_count', 'p_value')
+
+View(value_count_data) # Takes about 1 min to run for 50 terms 
+```
+
+While this method is certainly valid, it's basically a series of nested for loops and will take a long time to run based on the timeout listed below:
+
+terms_used[1:20] = 20 seconds
+terms_used[1:50] = 58 seconds
+terms_used[1:100] = 95 seconds
+terms_used[1:500] = over 5 minutes
+
+So obviously, will take forever to run if I ever decide to do the entire original dataset (like not happening). 
+
+A workaround to this is to expedite this is by creating a function and using lapply. 
+
+However, we can't just create a single function, so we split it into two function where one produces counts for high value and the other for low value. 
+
+```{r}
+
+high.counts.only = function(character) {
+  count = 0
+  for (char in character) {
+    for (i in 1:length(questions)) {
+      splitting = str_split(questions[i], " ") [[1]]
+      
+      if (char %in% splitting & values[i] >= 800) {
+        count = count + 1
+      } else {
+        count = count
+      }
+    }
+  } 
+  return(count)
+}
+
+
+low.counts.only = function(character) {
+  count = 0
+  for (char in character) {
+    for (i in 1:length(questions)) {
+      splitting = str_split(questions[i], " ") [[1]]
+      
+      if (char %in% splitting & values[i] < 800) {
+        count = count + 1
+      } else {
+        count = count
+      }
+    }
+  } 
+  return(count)
+}
+```
+
+Test time to run with either function using lapply is the following:
+  
+terms_used[1:20] = 14 seconds
+terms_used[1:50] = 40 seconds
+terms_used[1:100] = 73 seconds
+terms_used[1:500] = 5 minutes 
+
+```{r}
+high_counts_only = lapply(term_used[1:20], high.counts.only)
+unlist_high_counts = unlist(high_counts_only)
+
+low_counts_only = lapply(term_used[1:20], low.counts.only)
+unlist_low_counts = unlist(low_counts_only)
+
+unlist_term_used = unlist(term_used[1:20])
+
+almost_there = data.frame(unlist_term_used, unlist_high_counts, unlist_low_counts)
+
+p.value = list()
+
+for (i in 1:nrow(almost_there)) {
+  
+  aaa = chisq.test(c(almost_there$unlist_high_counts[i], almost_there$unlist_low_counts[i]), p = c(2/5, 3/5))
+  aaa = aaa$p.value
+  p.value = c(p.value, aaa)
+}
+
+unlist_p.value = unlist(p.value)
+
+combine = data.frame(unlist_term_used, unlist_high_counts, unlist_low_counts, unlist_p.value)
+
+colnames(combine) = c('term', 'n_count_high', 'n_count_low', 'p_value')
+
+View(combine) 
+
+# Way more steps than needed, but used to illustrate thought process 
+```
+
+EXTRA: Want to get a mean value for all questions with a given term in it and get that instead of a count of high/low values
+
+```{r}
+# Option #1
+
+avg_value_data = NULL
+
+for (term in term_used[1:10]) {
+  term_count = 0
+  sum_of_value = 0
+  for (i in 1:length(questions)) {
+    splitting = str_split(questions[i], " ")[[1]]
+    if (term %in% splitting) {
+      term_count = term_count + 1
+      sum_of_value = sum_of_value + values[i]
+    }
+  }
+  average = sum_of_value / term_count 
+  row = c(term, average)
+  avg_value_data = rbind(avg_value_data, row)
+}
+
+colnames(avg_value_data) = c('term', 'avg_value')
+
+# Option #2
+
+average_value = function(character) {
+  count = 0
+  sum = 0 
+  for (char in character) {
+    for (i in 1:length(questions)) {
+      splitting = str_split(questions[i], " ")[[1]]
+      if (char %in% splitting) {
+        count = count + 1
+        sum = sum + values[i]
+      } 
+    }		
+  }
+  avg = round(sum/count, 2)
+  return(avg)
+}
+
+combine = data.frame(unlist(term_used[1:10]), unlist(lapply(term_used[1:10], average_value)))
+
+colnames(combine) = c('term', 'avg_value')
+```
+
+Based on these methodologies of determining the value of a question based on a given term, we will provide our findings based on the following criteria:
+  
+  - A random set of 10 terms based on the criteria that letters more than 6 characters long and duplicates are removed. 
+
+The final table should output (i) the term used, (ii) count for high-value questions, (iii) count for low-value questions, (iv) avg value score, (v) p-value for chisq.test
+
+NOTE: I AM USING THE "FUNCTION + LAPPLY" METHOD 
+
+```{r}
+
+random_ten_terms = sample(term_used, 10) 
+
+# This will never be the same, so print them out. I ended up with:  burlington, bacardi, anemia, kingdoms, identifying, babcock, musicians, investors, special and appease
+
+my_ten_terms = list("burlington", "bacardi", "anemia", "kingdoms", "identifying", "babcock", "musicians", "investors", "special", "appease")
+
+
+
+holding = data.frame(unlist(my_ten_terms), unlist(lapply(my_ten_terms, high.counts.only)), unlist(lapply(my_ten_terms, low.counts.only)), unlist(lapply(my_ten_terms, average_value)))
+
+colnames(holding) = c('term', 'high_counts', 'low_counts', 'avg_value')
+
+holding.p.value = list()
+
+for (i in 1:nrow(holding)) {
+  
+  aaa = chisq.test(c(holding$high_counts[i], holding$low_counts[i]), p = c(2/5, 3/5))
+  aaa = aaa$p.value
+  holding.p.value = c(holding.p.value, aaa)
+}
+
+final_ten = data.frame(unlist(my_ten_terms), unlist(lapply(my_ten_terms, high.counts.only)), unlist(lapply(my_ten_terms, low.counts.only)), unlist(lapply(my_ten_terms, average_value)), unlist(holding.p.value))
+colnames(final_ten) = c('term', 'high_counts', 'low_counts', 'avg_value', 'p_value')
+View(final_ten)
+```
+
+Based on my findings, it appears that the term "kingdoms" appeared to have the largest avg. value ($2000) though it only appeared once in the entire 20,000 Jeopardy questions. 
+Whilst none of these 10 terms appear to persuade us to reject our null hypothesis that there is a difference for a particular term to appear dis-proportionally as either high or low value, the term "burlington" appears to be the closest to reject this null hypothesis. 
+The term "special" appeared most frequently among these 10 values. 
+
+
+CONCLUSION 
+
+In our preliminary analysis of the Jeopardy data set, we had sought to see any sort of particular trends or patterns that would have aided us in replicating what James Holzhauer did. 
+
+Our findings typically showed that there may be a disproportionate favoritism in terms of the topics/themes relating to questions being asked (most notably involving science, history and Shakespeare). 
+
+Furthermore, in our short analysis of finding whether there may be a difference relating to certain terms to high/low value questions, our random sample of 10 did not appear to show this to be the case. 
+
+However, it should be noted that since counts of 5 or less are known to cause potential errors in the validity of a chi-square test, another test of significance should be used (i.e. Fisher's Exact Test). 
