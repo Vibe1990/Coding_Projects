@@ -1,0 +1,1209 @@
+---
+title: "Predicting NYC Condo Prices"
+author: "Michael Hoang"
+date: "29/08/2020"
+output: html_document
+---
+
+The purpose of this project is to look at a subset of a condo sales data from all five boroughs of NYC: Bronx, Brooklyn, Manhattan, Staten Island, Queens. 
+Ultimately we want to answer the following questions:
+
+  1) How well does the size of a condo (measured in gross square feet) explain or preduct sale price across NYC as a whole?
+  2) How well does the size of a condo explain or predict sale price for each individual borough?
+
+The datasets are available [here](https://www1.nyc.gov/site/finance/taxes/property-rolling-sales-data.page). There is another dataset that you can use for a second analysis for the sake of comparison with the year 2018 + 2019 available [here](https://data.world/dataquest/nyc-property-sales-data). In this project, we'll use the latter dataset for our main analysis. The former will be used later on in the EXTRA Section. 
+
+
+
+STEP 1: Loading our libraries + creating our dataframes 
+
+Since we are extracting the dataset of each borough, we will need to create a single dataframe for an overall analysis. We will achieve this by cleaning each dataset for each borough by making sure the character variables are all in lowercase and without any other characters except for letters. Furthermore, there will be cases where there will be blanks in the data. Since we are only concern with complete data, we will drop these rows. 
+
+
+PART A: Loading the dataset for our main analysis
+```{r}
+
+library(tidyverse)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(purrr)
+library(stringr)
+library(dplyr)
+library(readr)
+library(readxl)
+library(magrittr)
+
+options(scipen=10000) # This is to deal with the scientific notations 
+
+pre_covid_ny_property_sale <- read.csv('C:/Users/micha/Downloads/NYC_property_sales.csv')
+View(pre_covid_ny_property_sale)
+```
+
+PART B: Creating a new dataframe with the most recent dataset for analysis in the EXTRA SECTION
+```{r}
+brooklyn_data = read_excel('C:/Users/micha/Downloads/rollingsales_brooklyn.xls', skip = 4)
+staten_island_data = read_excel('C:/Users/micha/Downloads/rollingsales_statenisland.xls', skip = 4)
+bronx_data = read_excel('C:/Users/micha/Downloads/rollingsales_bronx.xls', skip = 4)
+queens_data = read_excel('C:/Users/micha/Downloads/rollingsales_queens.xls', skip = 4)
+manhattan_data = read_excel('C:/Users/micha/Downloads/rollingsales_manhattan.xls', skip = 4)
+
+View(brooklyn_data) # borough ID is 3
+View(staten_island_data) # borough ID is 5
+View(bronx_data) # borough ID is 2
+View(queens_data) # borough ID is 4
+View(manhattan_data) # borough ID is 1
+
+ny_property_sale = bind_rows(manhattan_data, bronx_data, brooklyn_data, queens_data, staten_island_data)
+
+rm(brooklyn_data, staten_island_data, bronx_data, queens_data, manhattan_data)
+
+ny_property_sale =  ny_property_sale %>%
+  mutate(BOROUGH = 
+           case_when(BOROUGH == 1 ~ "Manhattan",
+                     BOROUGH == 2 ~ "Bronx",
+                     BOROUGH == 3 ~ "Brooklyn", 
+                     BOROUGH == 4 ~ "Queens", 
+                     BOROUGH == 5 ~ "Staten Island"))
+
+colnames(ny_property_sale) %<>% str_replace_all("\\s", "_") %>% tolower() 
+
+attach(ny_property_sale)
+
+ny_property_sale = ny_property_sale %>% 
+  mutate(neighborhood = str_to_title(neighborhood)) %>%
+  mutate(address = str_to_title(address)) %>%  
+  mutate(building_class_category = str_to_title(building_class_category))
+
+
+ny_property_sale = ny_property_sale %>% 
+  select(- 'ease-ment') %>% 
+  distinct()
+
+View(ny_property_sale)
+
+ny_property_sale = ny_property_sale %>% 
+  filter(sale_price > 10000) %>% 
+  filter(gross_square_feet > 0) %>% # note, this will include those building with the building class as R4 which had no updated info collected
+  drop_na(c(gross_square_feet, sale_price))
+
+ny_property_sale = ny_property_sale %>% 
+  arrange(borough, neighborhood)
+
+write.csv(ny_property_sale, 'nyc_property_sales.csv')
+
+View(ny_property_sale)
+
+```
+
+
+
+STEP 2: Exploration of the datasets
+
+Let's create a scatterplot to examine the relationship between the dependent variable (i.e. sale price) and the independent variable (i.e.basically everything else). Essentially, I want to observe the (1) Direction of the pattern, (2) Linearity and (3) Strength of the relationship. Now, I want to be able to generate scatterplots to visualize "sale price" vs. "gross square feet"
+
+```{r}
+COVID_residential = ny_property_sale %>% 
+  filter(
+    building_class_at_time_of_sale == "A0" |
+      building_class_at_time_of_sale == "A1" |
+      building_class_at_time_of_sale == "A2" |
+      building_class_at_time_of_sale == "A3" |
+      building_class_at_time_of_sale == "A4" |
+      building_class_at_time_of_sale == "A5" |
+      building_class_at_time_of_sale == "A6" |
+      building_class_at_time_of_sale == "A7" |
+      building_class_at_time_of_sale == "A8" |
+      building_class_at_time_of_sale == "A9" |
+      building_class_at_time_of_sale == "B1" |
+      building_class_at_time_of_sale == "B2" |
+      building_class_at_time_of_sale == "B3" |
+      building_class_at_time_of_sale == "B4" |
+      building_class_at_time_of_sale == "B5" |
+      building_class_at_time_of_sale == "B6" |
+      building_class_at_time_of_sale == "B7" |
+      building_class_at_time_of_sale == "B8" |
+      building_class_at_time_of_sale == "B9" |
+      building_class_at_time_of_sale == "C0" |
+      building_class_at_time_of_sale == "C1" |
+      building_class_at_time_of_sale == "C2" |
+      building_class_at_time_of_sale == "C3" |
+      building_class_at_time_of_sale == "C4" |
+      building_class_at_time_of_sale == "C5" |
+      building_class_at_time_of_sale == "C6" |
+      building_class_at_time_of_sale == "C7" |
+      building_class_at_time_of_sale == "C8" |
+      building_class_at_time_of_sale == "C9" |
+      building_class_at_time_of_sale == "D0" |
+      building_class_at_time_of_sale == "D1" |
+      building_class_at_time_of_sale == "D2" |
+      building_class_at_time_of_sale == "D3" |
+      building_class_at_time_of_sale == "D4" |
+      building_class_at_time_of_sale == "D5" |
+      building_class_at_time_of_sale == "D6" |
+      building_class_at_time_of_sale == "D7" |
+      building_class_at_time_of_sale == "D8" |
+      building_class_at_time_of_sale == "D9" |
+      building_class_at_time_of_sale == "S0" |
+      building_class_at_time_of_sale == "S1" |
+      building_class_at_time_of_sale == "S2" |
+      building_class_at_time_of_sale == "S3" |
+      building_class_at_time_of_sale == "S4" |
+      building_class_at_time_of_sale == "S5" |
+      building_class_at_time_of_sale == "S9"
+  )
+
+View(COVID_residential)
+```
+  
+NOTE: The original plan is to observe 'condos with elevators' which is designated with code "R4". However, due to COVID-19 impacting many economic sectors (notably the real estate sector), we don't have any info for this subset or any condos for that matter as sales and rentals have plummeted during quarantine as noted [here](https://www.wsj.com/articles/covid-19-new-york-real-estate-11597939146). So instead, we will look for all other forms of residential/dwelling spaces. This includes (A0-A9, S0-S5, S9, D0-D9, C0-C9, B1-B9)
+
+As for just looking at condos with elevators (i.e. R4), we will filter that out of the pre-Covid data set. 
+
+```{r}
+
+NYC_Condos = pre_covid_ny_property_sale %>% 
+  filter(building_class_at_time_of_sale == "R4")
+
+View(NYC_Condos)
+
+```
+
+Making plots:
+
+The first is for the condos 
+
+(NOTE: we took out the two highest valued property...looking at the data, this is likely the amount to buy the entire building as opposed to each unit)
+
+```{r}
+
+ggplot(data = NYC_Condos, 
+       aes(x = gross_square_feet, y = sale_price)) +
+  geom_point(aes(color = borough), alpha = 0.3)  + 
+  scale_y_continuous(labels = scales :: comma, limits = c(0, 80000000), expand = c(0,0)) + 
+  scale_x_continuous(expand = c(0,0), limits = c(0, 20000)) +
+  geom_smooth(method = 'lm', se = FALSE) + 
+  theme(panel.background = element_rect(fill = 'white'), 
+        axis.line = element_line(color = 'black')) + 
+  ylab("Sale Price (in US $)") + 
+  xlab("Gross Area (in Sq.Ft)")
+
+# Facet_wrap
+
+ggplot(data = NYC_Condos, 
+       aes(x = gross_square_feet, y = sale_price)) +
+  geom_point(aes(color = borough), alpha = 0.3)  + 
+  facet_wrap(~ borough, scales = "free", ncol = 2) +
+  scale_y_continuous(labels = scales :: comma) + 
+  geom_smooth(method = 'lm', se = FALSE) + 
+  theme(panel.background =  element_rect(fill = 'white'),
+        axis.line = element_line(color = 'black')) + 
+  labs(title = "Condo prices across the 5 buroughs of NYC based on square footage", 
+       x = "Gross Area (in Sq.Ft)", 
+       y = "Sale Price (in US dollars)")
+
+```
+
+Looking at the prices of condos across the 5 boroughs, we see a general trend of a higher sale price with greater gross area. This relationship appears to be somewhat linear where there is no sense of curvature. The strength of this relationship appears to be moderate and similar across most boroughs. However it should be noted that in some cases, this relationship may be skewed due to outliers such as the case with Manhattan. 
+
+
+For non-condos: 
+
+```{r}
+
+ggplot(data = COVID_residential,
+       aes(x = gross_square_feet, y = sale_price)) + 
+  geom_point(aes(color = borough), alpha = 0.3) + 
+  scale_y_continuous(labels = scales :: comma, limits = c(0, 170000000), expand = c(0,0)) + 
+  scale_x_continuous(labels = scales :: comma, limits = c(0, 450000), expand = c(0,0)) +
+  geom_smooth(method = 'lm', se = FALSE) + 
+  theme(panel.background =  element_rect(fill = 'white'),
+        axis.line = element_line(color = 'black')) + 
+  ylab('Sale Price (in US $)') + 
+  xlab("Gross Area (in Sq.Ft)")
+
+# Facet_wrap
+
+ggplot(data = COVID_residential, 
+       aes(x = gross_square_feet, y = sale_price)) +
+  geom_point(aes(color = borough), alpha = 0.3)  + 
+  facet_wrap(~ borough, scales = "free", ncol = 2) +
+  scale_y_continuous(labels = scales :: comma) + 
+  scale_x_continuous(labels = scales :: comma) +
+  geom_smooth(method = 'lm', se = FALSE) + 
+  theme(panel.background =  element_rect(fill = 'white'),
+        axis.line = element_line(color = 'black')) + 
+  labs(title = "Residential prices across the 5 buroughs of NYC based on square footage", 
+       x = "Gross Area (in Sq.Ft)", 
+       y = "Sale Price (in US dollars)")
+
+```
+
+As it pertains to residential prices for non-condos across the 5 boroughs, we see a similar trend that with greater gross area relating to higher sale price with most also following a linear pattern. Whilst this trend appears to be similar across the 5 boroughs, there are outliers that appear to play a role here as well. Particularly in the case of Manhattan. However, knowing what we somewhat no about NYC from the media (i.e. Manhattan = the most expensivest region in the US, Brooklyn being Hipster central [i.e. creeping rise in property value due to gentrification], Bronx as the sortof middle-class area, Queens as an aggregate of Ethnic enclaves whilst Staten Island is essentially the suburbs, these prices makes sense
+
+
+
+
+STEP 3: Outliers and Data Integrity
+
+So looking at the generated scatterplots above, we can see that there is a general trend indicating that as gross area increases, sale price also increases. When investigating the condo data, we see that there are outliers which can impact our regression models. Notably, there are two points with a recorded sale price at or above $200 million! Thus, we would like to limit the analysis to transactions of single units, wherever possible, as it affects the integrity of our dataset as most sales are recored as signle items (despite multple properties are purchased at once). Let's take a look at these outliers.
+
+
+PART A: Examining condos within each borough
+
+As it's entirely possible to have multiple units that are sold as a package deal, we would like to be able to be able to discern these units. 
+So we will want to isolate these unit based on the criteria: (a) same sale date and (b) same price. 
+
+From there, we will have to analyze further to come with some conclusions about these units. 
+
+```{r}
+
+# Brooklyn
+
+Brooklyn_condos_only <- NYC_Condos %>% 
+  group_by(sale_price, sale_date) %>% 
+  filter(borough == "Brooklyn") 
+
+multi_unit_sales_Brooklyn_condos <- Brooklyn_condos_only %>% 
+  group_by(sale_price, sale_date) %>% 
+  filter(n() >= 2) %>%  # Decided on at least units as to get a wider catch of these potential multi unit purchases
+  arrange(desc(sale_price))
+
+View(multi_unit_sales_Brooklyn_condos)
+
+```
+
+Looking at our findings, we see that the following addresses are a result of multi-unit purchases at once. 
+  (1) 554 on 4th Avenue (zipcode: 11215) on April 8th, 2019: 40 units -> This was likely a result of a property developer purchase that contracted out to a realtor team for selling these properties.
+  (2) 1404 on Ocean Parkway (zipcode: 11230) on December 28th, 2018: 5 units -> likely an expansion job given the proximity of unit together
+  (3) 184 on Kent Avenue (zipcode: 11249) on January 9th + February 22nd, 2019: 3 units, 2 units -> likely an expansion job given the proximity of unit together
+  (4) 556 on State Street (zipcode: 11217) on July 19th, 2019: 2 units ->  likely an expansion job given the proximity of unit together
+  (5) 21 on India Street (zipcode: 11122) on October 3rd, 2019: 2 units -> more likely to be two condos sold on same day and not an expansion job given proximity of units (i.e. on different floors)
+  (6) 70 on Berry Street (zipcode: 11249) on March 12th, 2019: 2 units -> likely an expansion job given the proximity of unit together
+  (7) 565 on Flushing Avenue (zipcode: 11206) on February 11th + February 12th, 2019: 2 units, 2 units-> likely an expansion job given the proximity of unit together
+  (8) 1502 West on 1st Street (zipcode: 11204) on November 7th + 20th, 2018: 2 units, 2 units -> likely to be multiple condos sold on the same day and not an expansion job given the lack of proximity of the units
+  (9) 755 on Kent Avenue (zipcode: 11249) on February 13th, 2019: 2 units -> likely an expansion job given the proximity of unit together
+
+```{r}
+
+# Bronx
+
+Bronx_condos_only <- NYC_Condos %>% 
+  group_by(sale_price, sale_date) %>% 
+  filter(borough == "Bronx") 
+
+multi_unit_sales_Bronx_condos <- Bronx_condos_only %>% 
+  group_by(sale_price, sale_date) %>% 
+  filter(n() >= 2) %>%
+  arrange(desc(sale_price))
+
+View(multi_unit_sales_Bronx_condos)
+
+```
+
+Looking at our findings, we can see that the following addresses are a result of multi-unit purchases at once. 
+  1) 1560 on Unionport Road (zipcode: 10462) on May 21st, 2019: 2 units -> likely just two condos sold on the same day given the lack of proximity for an expansion job + the number of units sold at one time
+  2) 2059 Mcgraw Avenue (zipcode: 10462) on May 21th, 2019: 2 units -> likely just two condos sold on the same day given the lack of proximity for an expansion job + the number of units sold at one time
+
+```{r}
+
+# Manhattan
+
+Manhattan_condos_only <- NYC_Condos %>% 
+  group_by(sale_price, sale_date) %>% 
+  filter(borough == "Manhattan") 
+
+multi_unit_sales_Manhattan_condos <- Manhattan_condos_only %>% 
+  group_by(sale_price, sale_date) %>% 
+  filter(n() >= 2) %>%
+  arrange(desc(sale_price))
+
+View(multi_unit_sales_Manhattan_condos)
+```
+
+Looking at our findings, we can see that the following addresses are likely a result of multi-unit purchases at once. 
+ 1) 70 on Vestry Street (zipcode: 10013) on February 12th, 2019: 15 units -> Likely a product of an outsourced contract job to a realtor by the developers
+ 2) 212 on Fifth Avenue (zipcode: 10010) on May 15th, 2019: 2 units -> Expansion purchase 
+ 3) 80 Columbus Circle (zipcode: 10023) on January 16th, 2019: 2 units -> Expansion purchase 
+ 4) 1 Central Park South (zipcode: 10019) on March 8th, 2019: 2 units -> Expansion purchase 
+ 5) 151 East on 58th Street (zipcode: 10022) on May 31st, 2019: 2 units -> Expansion purchase 
+ 6) 25 Columbus Circle (zipcode: 10019) on  June 21st, 2019: 2 units -> Expansion purchase 
+ 7) 25 Central Park West (zipcode: 10023) on May 22, 2019 : 2 units -> Expansion purchase 
+ 8) 65 West on 13th street (zipcode: 10011) on  June 28th, 2019: 2 units -> Expansion purchase
+ 9) 40 East on 61st street (zipcode: 10065) on  June 26th, 2019: 2 units -> Expansion purchase
+ 10) 200 East on 65th street (zipcode: ) on June 26th, 2019 : 3 units -> Expansion purchase 
+ 11) 500 Park Avenue (zipcode: 10022) on June 27th, 2019 : 2 units -> Expansion purchase
+ 12) 768 on 5th Avenue (zipcode: 10019) on April 17th, 2019: 2 units -> Expansion purchase
+ 13) 923 on 5th Avenue (zipcode: 10021) on June 27th, 2019: 2 units - > Likely a result of purchases happening on the same day 
+ 14) 155 Perry Street (zipcode: 10014) on August 6th, 2019: 2 units -> Expansion purchase
+ 15) 21 Astor Place (zipcode: 10003) on June 28th, 2019 : 2 units -> Expansion purchase
+ 16) 450 East on 83rd Street (zipcode: 10028) on March 26th, 2019: 2 units -> Expansion purchase
+ 17) 240 Riverside Boulevard (zipcode: 10069) on September 26th, 2019 : 2 units -> Expansion purchase
+ 18) 120 East on 87th Street (zipcode: 10128) on June 28th 2019: 2 units -> Expansion purchase
+ 19) 170 East on 87th street (zipcode: 10128) on Feb 12th, 2019 : 3 units -> Expansion purchase
+ 20) 1235 Park Avenue (zipcode: 10128) on May 23rd, 2019 : 2 units -> Expansion purchase
+ 21) 330 East on 38th street (zipcode: 10016) on  June 13th, 2019: 2 units -> Expansion purchase
+ 22) 201 West on 74th Street (zipcode: 10023) on June 18th, 2019: 3 units -> expansion purchase
+ 23) 100 Central Park South (zipcode: 10019) on April 17th, 2019: 2 units -> expansion [urchase]
+ 24) 225 West on 83rd Street (zipcode: 10024) on June 11th, 2019: 4 units -> Expansion purchase
+ 25) 1235 Park avenue (zipcode: 10128) on March 8th, 2019 : 2 units -> Expansion purchase
+ 26) 140 East on 63rd streed (zipcode: 10065) on February 19th, 2019 : 2 units -> Expansion purchase
+ 27) 350 West on 42nd Street (zipcode: 10036) on March 13th, 2019: 2 units -> Expansion purchase
+ 28) 160 West on 86th Street (zipcode: 10024) on January 22nd, 2019 : 2 units -> Expansion purchase
+ 29) 60 East on 55th (zipcode: 10022) on June 20th, 2019: 2 units -> Expansion purchase
+ 30) 280 Park Avenue South (zipcode: 10010) on August 22nd, 2019 : 2 units -> Expansion purchase
+ 31) 350 West on 14th street (zipcode: 10014) on April 23rd, 2019 : 2 units -> Expansion purchase
+ 32) 715 Park Avenue (zipcode: 10021) on June 27th, 2019: 2 units -> Expansion purchase
+ 33) 330 East on 38th Street (zipcode: 10016) on  June 21st, 2019 : 2 units -> Expansion purchase
+ 34) 154 Attoney Street (zipcode: 10002) on June 27th, 2019 : 2 units -> Expansion purchase
+ 35) 130 West on 70th Street (zipcode: 10024) on  August 21st, 2019: 2 units -> Expansion purchase
+ 36) 640 West End Avenue (zipcode: 10024) on  Feb 20th, 2019: 2 units -> Expansion purchase
+ 37) 2109 Broadway (zipcode: 10023) on September 6th, 2019 : 2 units -> Expansion purchase
+ 38) 250 West on 90th Street (zipcode: 10024) on September 20th, 2019: 2 units -> Expansion purchase
+ 39) 21 South End Avenue (zipcode: 10280) on May 31st, 2019 : 2 units -> Expansion purchase
+ 40) 104 West on 70th Street (zipcode: 10023) on August 9th, 2019 : 2 units -> Expansion purchase
+ 41) 565 Broome Street (zipcode: 10013) on August 6th, 2019: 2 units -> Expansion purchase
+ 42) 225 East on 34th Street (zipcode: 10016) on June 28th, 2019 : 2 units -> Expansion purchase
+ 43) 415 East on 37th Street (zipcode: 10016) on October 4th, 2019 : 2 units -> Expansion purchase
+ 44) 240 East on 47th Street (zipcode: 10017) on March 1st, 2019 : 2 units -> Expansion purchase
+ 45) 2211 Broadway (zipcode: 10024) on May 16th, 2019 : 2 units -> Expansion purchase
+ 46) 205 Wast on 22nd Street (zipcode: 10010) on June 20th, 2019: 2 unit -> Expansion purchase
+ 47) 300 Rector Place (zipcode: 10280) on October 18th, 2019 : 3 unit -> Expansion purchase
+ 48) 104 West on 70th Street (zipcode: 10023) on FEb 15th, 2019 : 2 unit -> Expansion purchase
+ 49) 117 East on 57th Street (zipcode: 10022) on  May 22nd, 2019: 2 unit -> Expansion purchase
+ 50) 25 Central Park West (zipcode: 100230) on October 2nd, 2019 : 2 unit -> Expansion purchase
+ 51) 1623 Third Avenue (zipcode: 10128) on August 21st, 2019 : 2 unit -> Expansion purchase
+ 52) 30 West on 90th street (zipcode: 10024) on October 1st, 2019 : 2 unit -> Expansion purchase
+ 53) 111 West on 67th Street (zipcode: 10023) on July 17th, 2019 : 2 unit -> Expansion purchase
+ 54) 255 East on 49th Street (zipcode: 10017) on  April 12th, 2019: 2 unit -> Expansion purchase
+ 55) 155 West on 68th Street (zipcode: 10023) on July 30th, 2019 : 2 unit -> Expansion purchase
+ 56) 215 West on 95th street (zipcode: 10025) on  August 20th, 2019: 2 unit -> Expansion purchase
+ 57) 41 West on 72nd Street (zipcode: 10023) on October 16th, 2019 : 2 unit -> Expansion purchase
+ 58) 300 East 93rd Street (zipcode: 10128) on December 20th, 2018 : 2 unit -> Expansion purchase
+ 59) 277 on Fifth Avenue (zipcode: 10016) on March 21st, 2019 : 2 unit -> Expansion purchase
+ 60) 32 East on 76th street (zipcode: 10021) on September 23rd, 2019 : 2 unit -> Expansion purchase
+ 61) 224 East on 52nd street (zipcode: 10022) on May 2nd, 2019: 2 unit -> Expansion purchase
+ 62) 127 West on 82nd Street (zipcode: 10024) on January 2nd, 2019: 2 unit -> Likely a result of a multi-unit purchase 
+ 63) 2109 Broadway (zipcode: 10023) on April 5th, 2019 : 2 unit -> Expansion purchase
+ 64) 145 East on 48th Street (zipcode: 10017) on July 19th, 2019 : 2 unit -> Expansion purchase
+ 65) 404 East on 79th Street (zipcode: 10075) on March 25th, 2019 : 2 unit -> Expansion purchase
+ 66) 500 West on 43rd Street (zipcode: 10036) on October 4th, 2019 : 2 unit -> Likely a result of a multi-unit purchase
+ 67) 20 West Street (zipcode: 10004) on June 4th, 2019 : 2 unit -> Expansion purchase
+ 68) 250 South Street (zipcode: 10002) on June 5th, 2019 : 2 unit -> Likely a multi-unit purchase or just 2 units purchased on the same day
+ 69) 345 East on 80th Street (zipcode: 10075) on May 24th, 2019 : 2 unit -> Expansion purchase
+ 70) 105 West on 72nd Street (zipcode: 10023) on September 13th, 2019 : 2 unit -> Considering the difference in unit proximity, likely a multi-unit purchase
+ 71) 415 East on 37th Street (zipcode: 10016) on May 2nd, 2019 : 2 unit -> Expansion purchase
+ 72) 220 East on 65th Street (zipcode: 10065) on November 15th, 2018 : 2 unit -> Likely a result of a multi-unit purchase 
+ 73) 250 South Street (zipcode: 10002) on June 12th, 2019 : 2 unit -> Expansion purchase 
+ 74) 318 West on 100th Street (zipcode: 10025) on September 13th, 2019 : 2 unit -> Expansion purchase
+ 75) 330 East on 38th Street (zipcode: 10016) on August 30th, 2019 : 2 unit -> Expansion purchase
+ 76) 40 East on 78th Street (zipcode: 10075) on June 26th, 2019 : 2 unit -> likely a multi-unit purchase
+ 77) 1437 3 Avenue (zipcode: 10028) on August 22nd, 2019 : 2 unit -> Expansion purchase 
+ 78) 150 West on 51st Street (zipcode: 10019) on  May 8th, 2019: 2 unit -> Expansion purchase
+ 79) 250 East on 54th Street (zipcode: 10022) on December 19th, 2018 : 2 unit -> Expansion purchase
+ 80) 70 West on 139 street (zipcode: 10037) on October 9th + December 14th + December 10th + December 11th : 2 unit each (8 total) -> Expansion purchase
+
+```{r}
+
+# Queens
+
+Queens_condos_only <- NYC_Condos %>% 
+  group_by(sale_price, sale_date) %>% 
+  filter(borough == "Queens") 
+
+multi_unit_sales_Queens_condos <- Queens_condos_only %>% 
+  group_by(sale_price, sale_date) %>% 
+  filter(n() >= 2) %>%
+  arrange(desc(sale_price))
+
+View(multi_unit_sales_Queens_condos)
+
+```
+
+Looking at our findings, we can see that the following addresses are likely a result of multi-unit purchases at once. 
+ 1) 40-35 Ithaca Street (zipcode: 11373) on September 17th, 2019: 13 units ->  Likely a result of building an old building and fixing it up as a rental building
+ 2) 145-38 on 34th Avenue (zipcode: 11354) on March 20th, 2019: 13 units -> Likely a result of multiple units purchased for rental
+ 3) 71-66 Parsons Boulevard (Zipcode: 11365) on March 5th, 2019: 2 units -> Expansion purchase
+ 4) 51-33 Goldsmith Street (zipcode: 11373) on August 9th, 2019: 2 units -> Likely is a result of purchases happening on the same day rather than multi-unit purchased
+ 5) 178-36 Wexford Terrace (zipcode: 11432) on May 2nd, 2019: 2 units -> Expansion purchase
+
+```{r}
+
+# Staten Island
+
+Staten_condos_only <- NYC_Condos %>% 
+  group_by(sale_price, sale_date) %>% 
+  filter(borough == "Staten Island") 
+
+multi_unit_sales_Staten_condos <- Staten_condos_only %>% 
+  group_by(sale_price, sale_date) %>% 
+  filter(n() >= 2) %>%
+  arrange(desc(sale_price))
+
+View(multi_unit_sales_Staten_condos)
+
+```
+
+Looking at our findings, we can see that 
+- 6 New Lane (zipcode: 10305) on September 18th, 2019: 2 units -> Expansion purchase
+
+
+Looking at these findings, we can see that the majority of these double units are likely purchased as a result of a converted duplex unit or multi-unit conversions given the difficulty for most to find a larger apartment in the area and in budget. [Yes it's cheaper to buy and combine an adjacent unit than to find a bigger unit](https://www.brickunderground.com/blog/buy_curious_combining_units). In fact, this practice is pretty common in NYC and most Metropolitans where real estate is at a premium. As such, the converted unit would be considered as a single purchase as opposed to two units. So we will keep only the unit with the largest gross area. 
+
+NOTE: we defined these mega-condo units based on the PROXIMITIES OF THE UNITS (i.e. adjacent rooms or floors with similar unit numbers)
+
+Looking at 165 East 66th Street, we will remove it since it is clear that it is representing the entire sale of the residential building (i.e. multiple units sold as one billing price). On the other hand, the 220 Central Park South unit will be retained since it's found to be a single unit (albeit very large unit). 
+This was made evident [here]([https://www.businessinsider.com/ken-griffin-most-expensive-home-ever-sold-us-nyc-penthouse-2019-1) as being the most expensive home sold in US history. 
+
+
+Looking at each borough, we see multiple incidences of multi-unit purchases billed as a single unit:
+
+BROOKLYN: 
+- 554 on 4th Avenue in Brooklyn. Considering that sales for each condo was b/t 600K to 5.5 million [as shown here](https://www.buzzbuzzhome.com/ca/554-fourth-avenue1) whilst the listed price for each unit in this location being $29.6 million, it's clear to see that this was likely a multi-unit sale with a single listing price. 
+- Similarly in 1404 Ocean Parkway Avenue in Brooklyn, there were 5 units that were sold for a single price. Considering that units had previously sold for much less [as shown here](https://streeteasy.com/building/1404-ocean-parkway-brooklyn#tab_building_detail=4) and shown [here] (https://www.zillow.com/homedetails/1404-Ocean-Pkwy-1A-Brooklyn-NY-11230/320255342_zpid/), it's clear that this was likely either a multi-unit sale with a single listing price or a conversion of these multiple units into one given the proximity of each unit to one another. 
+- Another notable incidence of a multi-unit purchase came with the units for 184 Kent Avenue (C311-C313) in Brooklyn. Looking at the previous closing of the C313 unit ($1.35 million) whilst the previous history of the C311 unit being used as a rental at $6000/month ([as shown here](https://streeteasy.com/property/8823559-austin-nichols-house-c311)], this leads us to see this unit as possibly a multi-unit sale or a conversion into a single unit given the proximity. 
+
+
+BRONX: 
+Whilst multi-units appear to have been purchased on the same day for the same price, the amount that each unit sold for was comparable to other condos in the same area such as the case for [2053 McGraw](https://www.trulia.com/p/ny/bronx/2053-mcgraw-ave-bronx-ny-10462--83197) and [2059 McGraw](https://www.trulia.com/p/ny/bronx/2059-mcgraw-ave-4d-bronx-ny-10462--2008917905). As such, it is likely that these units were individual units purchased that happened to be on the same day. It is also important to note that the sale date for these homes happen to be in Spring + Early Summer, which coincides with being the period where people are more likely on the prowl for homes [as noted here](https://moneywise.com/a/best-and-worst-times-to-buy-a-house#:~:text=The%20best%20months%20to%20buy%20a%20home&text=Generally%2C%20the%20best%20time%20to,buyers%20are%20on%20the%20prowl.)
+
+
+MANHATTAN: 
+- The multiple units at 70 Vestry Street is likely a result of a multi-unit purchase given the history of these units used a rental property [as seen here](https://streeteasy.com/property/9032097-70-vestry-street-7e) and sale price for a larger unit within this building as noted [here](https://streeteasy.com/building/70-vestry-street-new_york/11n?card=1). 
+- In the case of 200 East 65th Street, these units purchased are found to be a result of an expansion of existing units on the floor to a "mega condo" [as found here](https://streeteasy.com/building/bristol-plaza/31?card=1). As such, this unit will be included in our dataset but as a single unit. 
+- 170 East 87th Street E6 units are likely a result of expansion of condo units into a "mega unit" given the cost of the E3A unit as noted [here](https://www.redfin.com/NY/New-York/170-E-87th-St-10128/unit-E6A/home/45292391) and as such will likely remain in our dataset as a single entry instead of 3 
+- 201 West 74th Street units and 225 West 83rd Street are found to be expanded condo units given its proximity to each other as noted [here](https://www.corcoran.com/nyc-real-estate/for-sale/upper-west-side/201-west-74th-street-16-hjk/5495115) and [here](https://www.trulia.com/p/ny/new-york/225-w-83rd-st-4h-new-york-ny-10024--2088872351)
+- 300 Rector Place units are likely to be a result of a expansion unit given the cost of these units being under the written sale price + proximity of each unit (https://www.cityrealty.com/nyc/battery-park-city/battery-pointe-300-rector-place/apartment-3N/sold/A198651)
+
+As for the rest of the units that were found to have occured on the same day for roughly the same price, it is likely to be a result of coincidence as these units were approximately worth as much as 1.5 million - 2.5 million based on the size of unit and being on the most expensive neighbourhood in the US. 
+
+
+QUEENS: 
+- The units at 40-35 Ithaca Street is found to be a result of a multi-unit purchase listed as a single unit as shown [here](https://streeteasy.com/building/40_35-ithaca-street-elmhurst#tab_building_detail=2). 
+- The 145-38 34th Street is found to be a result of a multi-unit purchase listed as a single unit as shown [here](https://streeteasy.com/building/145_38-34-avenue-flushing#tab_building_detail=2)
+
+
+Furthermore looking at the two largest outliers: 220 Central Park South and 165 East on 66th street, we see that the former is really just a result of purchasing the most expensive real estate property in US history, (as shown here)[https://www.businessinsider.com/ken-griffin-most-expensive-home-ever-sold-us-nyc-penthouse-2019-1]. The latter is likely shown to be a result of multiple properties being purchased at once and billed as such. Thus we would like to filter this out of the finalized set. As such, since the former is really just a single unit (albeit a massive one), we will keep it in the data set. However, the latter will need to be removed. 
+
+Now that we have an idea of these potential multi-unit sale, we can think about removing them. However, the first part is to create a copy of the original condo data so as to be used for reference later on. 
+
+```{r}
+
+NYC_Condos_original = NYC_Condos
+View(NYC_Condos_original) # There are 8096 entries here
+
+```
+
+PART B: Dealing with each borough
+
+```{r}
+
+brooklyn.multi.units = 
+  ifelse(str_detect(Brooklyn_condos_only$address, "(554 4 Avenue)"), 'multi property purchase/multi-plex',
+  ifelse(str_detect(Brooklyn_condos_only$address, "(1404 Ocean Parkway, )[12][abcd]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Brooklyn_condos_only$address, "(184 Kent Avenue, )C[35]1[123]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Brooklyn_condos_only$address, "(556 State Street, )5[ab]-S"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Brooklyn_condos_only$address, "(70 Berry Street, )5[ab]"), 'multi property purchase/multi-plex',
+  ifelse(str_detect(Brooklyn_condos_only$address, "(565 Flushing Avenue, )[6A|6B|8A|8B]"), 'multi property purchase/multi-plex',
+  ifelse(str_detect(Brooklyn_condos_only$address, "(755 Kent Avenue, )[45]08"), 'multi property purchase/multi-plex', "single-unit")))))))
+
+
+Brooklyn_condos_only$multi.units = brooklyn.multi.units
+
+Brooklyn_condos_only = Brooklyn_condos_only %>% 
+  filter( address != '556 State Street, 5a-S') %>% 
+  filter( address != '554 4 Avenue, 3a' ) %>% 
+  filter( address != '554 4 Avenue, 3b' ) %>% 
+  filter( address != '554 4 Avenue, 3c' ) %>% 
+  filter( address != '554 4 Avenue, 3d' ) %>% 
+  filter( address != '554 4 Avenue, 3e' ) %>% 
+  filter( address != '554 4 Avenue, 4a' ) %>% 
+  filter( address != '554 4 Avenue, 4b' ) %>% 
+  filter( address != '554 4 Avenue, 4c' ) %>% 
+  filter( address != '554 4 Avenue, 4d' ) %>% 
+  filter( address != '554 4 Avenue, 4e' ) %>% 
+  filter( address != '554 4 Avenue, 5a' ) %>% 
+  filter( address != '554 4 Avenue, 5b' ) %>% 
+  filter( address != '554 4 Avenue, 5c' ) %>% 
+  filter( address != '554 4 Avenue, 5d' ) %>% 
+  filter( address != '554 4 Avenue, 5e' ) %>% 
+  filter( address != '554 4 Avenue, 6a' ) %>% 
+  filter( address != '554 4 Avenue, 6b' ) %>% 
+  filter( address != '554 4 Avenue, 6c' ) %>% 
+  filter( address != '554 4 Avenue, 6d' ) %>% 
+  filter( address != '554 4 Avenue, 6e' ) %>% 
+  filter( address != '554 4 Avenue, 7a' ) %>% 
+  filter( address != '554 4 Avenue, 7b' ) %>%   
+  filter( address != '554 4 Avenue, 7c' ) %>% 
+  filter( address != '554 4 Avenue, 7d' ) %>% 
+  filter( address != '554 4 Avenue, 7e' ) %>%
+  filter( address != '554 4 Avenue, 8a' ) %>% 
+  filter( address != '554 4 Avenue, 8b' ) %>% 
+  filter( address != '554 4 Avenue, 8c' ) %>% 
+  filter( address != '554 4 Avenue, 8d' ) %>% 
+  filter( address != '554 4 Avenue, 8e' ) %>% 
+  filter( address != '554 4 Avenue, 9a' ) %>% 
+  filter( address != '554 4 Avenue, 9b' ) %>% 
+  filter( address != '554 4 Avenue, 9c' ) %>% 
+  filter( address != '554 4 Avenue, 9d' ) %>% 
+  filter( address != '554 4 Avenue, 9e' ) %>% 
+  filter( address != '554 4 Avenue, 10a' ) %>% 
+  filter( address != '554 4 Avenue, 10b' ) %>% 
+  filter( address != '554 4 Avenue, 10c' ) %>% 
+  filter( address != '554 4 Avenue, 11a' ) %>%
+  filter( address != '554 4 Avenue, 11b') %>% 
+  filter( address != '1404 Ocean Parkway, 1b' ) %>% 
+  filter( address != '1404 Ocean Parkway, 2b' ) %>% 
+  filter( address != '1404 Ocean Parkway, 2c' ) %>% 
+  filter( address != '755 Kent Avenue, 408' ) %>% 
+  filter( address != '1404 Ocean Parkway, 2d' ) %>% 
+  filter( address != '565 Flushing Avenue, 6a' ) %>% 
+  filter( address != '565 Flushing Avenue, 8a' ) %>% 
+  filter( address != '70 Berry Street, 5b' ) %>% 
+  filter( address != '184 Kent Avenue, C312' ) %>% 
+  filter( address != '184 Kent Avenue, C313' ) %>% 	 				
+  filter( address != '184 Kent Avenue, C512' )	
+
+View(Brooklyn_condos_only)
+
+
+Bronx_condos_only <- Bronx_condos_only %>% 
+  mutate(multi.units = 'single-unit')
+
+View(Bronx_condos_only)
+
+
+
+manhattan.multi.units.one = 
+  ifelse(str_detect(Manhattan_condos_only$address, "(70 Vestry Street, )[3c|6c|6d|6e|6f|7a|7b|7c|7d|7e|7f|8w|9w|10w|11w]"), 'multi property purchase/multi-plex',
+  ifelse(str_detect(Manhattan_condos_only$address, "(212 Fifth Avenue, )21[ab]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(80 Columbus Circle, )Nt75[ce]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(1 Central Park Sourth, )60[35]"), 'multi property purchase/multi-plex',
+  ifelse(str_detect(Manhattan_condos_only$address, "(151 East 58th Street, )46[ab]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(151 East 58th Street, )46[ab]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(25 Columbus Circle, )St68[af]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(25 Central Park West, )[19k|19j|10u|10v]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(65 West 13th Street, )6[ab]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(40 East 61st Street, )Ph[ab]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(200 East 65th Street, )31[enw]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(500 Park Avenue, )36[ab]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(768 5 Avenue, )80[23]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(155 Perry Street, )[78]c"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(21 Astor Place, )6[ef]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(450 East 83rd Street, )17[ab]"), 'multi property purchase/multi-plex',
+  ifelse(str_detect(Manhattan_condos_only$address, "(240 Riverside Boulevard, )5 [GH]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(120 East 87th Street, )P26-[AB]"), 'multi property purchase/multi-plex',                                                                                      
+  ifelse(str_detect(Manhattan_condos_only$address, "(170 East 87th Street, )E6[abc]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(1235 Park Avenue, )1[26][ab]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(330 East 38th Street, )[23i|23j|32o|32n|Phd|Phe]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(201 West 74th Street, )16[hjk]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(100 Central Park South, )5[bc]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(225 West 83rd Street, )4[hikl]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(140 East 63rd Street, )7[dg]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(350 West 42nd Street, )58[gh]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(160 West 86th Street, )4[bc]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(60 East 55th Street, )17[ad]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(280 Park Avenue South, )14[gh]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(350 West 14th Street, )Ph[de]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(715 Park Avenue, )4[cd]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(330 East 38th Street, )[23i|23j|32n|32o|Phd|Phe]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(154 Attorney Street, )70[12]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(130 West 70th Street, )12[af]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(640 West End Avenue, )11[ac]"), 'multi property purchase/multi-plex',
+  ifelse(str_detect(Manhattan_condos_only$address, "(2109 Broadway, )[13|14]-[79|87]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(250 West 90th Street, )18[jk]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(21 South End Avenue, )20[01]"), 'multi property purchase/multi-plex',
+  ifelse(str_detect(Manhattan_condos_only$address, "(104 West 70th Street, )[3g|10d|10e]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(104 West 70th St, )3h"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(565 Broome Street, )N5[gh]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(415 East 37th Street, )[26k|26l|9j|9k]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(240 East 47th Street, )23[fg]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(2211 Broadway, )Ph[de]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(205 East 22nd Street, )5[ef]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(300 Rector Place, )3[nop]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(104 West 70th Street, )[10e|10f|3g]"), 'multi property purchase/multi-plex',
+  ifelse(str_detect(Manhattan_condos_only$address, "(104 West 70th St, )3h"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(117 East 57th Street, )[33c|33d]"), 'multi property purchase/multi-plex', 'single-unit')))))))))))))))))))))))))))))))))))))))))))))))))         
+
+manhattan.multi.units.two =          
+  ifelse(str_detect(Manhattan_condos_only$address, "(1623 Third Ave, )28[jk]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(30 West 90th Street, )7[ab]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(111 West 67th Street, )20-[LM]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(255 East 49th Street, )[4-D|4c]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(155 West 68th Street, )11-[27|28]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(215 West 95th Street, )11[lm]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(41 West 72nd Street, )14[cd]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(300 East 93rd Street, )22[af]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(32 East 76th Street, )140[12]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(224 East 52nd Street, )1[46]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(127 West 82nd Street, )[2e|3b]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(145 East 48th Street, )23[bc]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(404 East 79 St, )24[cd]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(500 West 43rd Street, )3[ak]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(20 West Street, )23[de]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(250 South Street, )[28k|29k]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(345 East 80th Street, )32[hj]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(220 East 65th Street)"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(318 West 100th Street, )[12]b"), 'multi property purchase/multi-plex',
+  ifelse(str_detect(Manhattan_condos_only$address, "(1437 3 Avenue, )16[abc]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(150 West 51st street, )14-[15|16]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(250 East 54th Street, )20[be]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "(70 West 139 Street, )[3c|4c|5c|6f|5f]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "70 West 139 Street"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Manhattan_condos_only$address, "70 West 139th, 3d"), 'multi property purchase/multi-plex','single-unit')))))))))))))))))))))))))
+
+manhattan.multi.units = 
+  ifelse(c(manhattan.multi.units.one == 'multi property purchase/multi-plex' | manhattan.multi.units.two == "multi property purchase/multi-plex"), "property purchase/multi-plex", "single-unit")
+
+Manhattan_condos_only$multi.units = manhattan.multi.units
+
+Manhattan_condos_only = Manhattan_condos_only %>% 
+  filter(address != "70 Vestry Street, 3c") %>%
+  filter(address != "70 Vestry Street, 6c") %>%
+  filter(address != "70 Vestry Street, 6d") %>%
+  filter(address != "70 Vestry Street, 6e") %>%
+  filter(address != "70 Vestry Street, 6f") %>%
+  filter(address != "70 Vestry Street, 7a") %>%
+  filter(address != "70 Vestry Street, 7b") %>%
+  filter(address != "70 Vestry Street, 7c") %>%
+  filter(address != "70 Vestry Street, 7d") %>%
+  filter(address != "70 Vestry Street, 7e") %>%
+  filter(address != "70 Vestry Street, 7f") %>%
+  filter(address != "70 Vestry Street, 8w") %>%
+  filter(address != "70 Vestry Street, 9w") %>%
+  filter(address != "70 Vestry Street, 10w") %>%
+  filter(address != "70 Vestry Street, 11w") %>%
+  filter(address != '80 Columbus Circle, Nt75e') %>%
+  filter(address != '1 Central Park South, 605') %>%
+  filter(address != '151 East 58th Street, 46b') %>%
+  filter(address != '25 Columbus Circle, St68f') %>% 
+  filter(address != "65 West 13th Street, 6a") %>%
+  filter(address != "25 Central Park West, 19k") %>%
+  filter(address != '25 Central Park West, 10u') %>%
+  filter(address != '40 East 61st Street, Pha') %>%
+  filter(address != "200 East 65th Street, 31e") %>% 
+  filter(address != "200 East 65th Street, 31w") %>% 
+  filter(address != '500 Park Avenue, 36b') %>%
+  filter(address != '768 5 Avenue, 802') %>%
+  filter(address != '155 Pery Street, 7c') %>%
+  filter(address != '21 Astor Place, 6f') %>%
+  filter(address != '450 East 83rd Street, 17a') %>%
+  filter(address != '240 Riverside Boulevard, 5 G') %>%
+  filter(address != '120 East 87th Street, P26-B') %>%
+  filter(address != "170 East 87th Street, E6b") %>% 
+  filter(address != "170 East 87th Street, E6c") %>% 
+  filter(address != '1235 Park Avenue, 16a') %>%
+  filter(address != '1235 Park Avenue, 12a') %>%
+  filter(address != '330 East 38th Street, 23i') %>%
+  filter(address != '330 East 38th Street, 32o') %>%
+  filter(address != '330 East 38th Street, Phe') %>%
+  filter(address != "201 West 74th Street, 16h") %>%
+  filter(address != "201 West 74th Street, 16j") %>% 
+  filter(address != '100 Central Park South, 5c') %>%
+  filter(address != "225 West 83rd Street, 4h") %>%
+  filter(address != "225 West 83rd Street, 4k") %>%
+  filter(address != "225 West 83rd Street, 4l") %>%
+  filter(address != '140 East 63rd Street, 7g') %>%
+  filter(address != '350 West 42nd Street, 58h') %>%
+  filter(address != '160 West 86th Street, 4b') %>%
+  filter(address != '60 East 55th Street, 17a') %>%
+  filter(address != '280 Park Avenue South, 14g') %>%
+  filter(address != '350 West 14th Street, Phe') %>%
+  filter(address != '715 Park Avenue, 4d') %>%
+  filter(address != '330 East 38th Street, Phe') %>%
+  filter(address != '330 East 38th Street, 32o') %>%
+  filter(address != '330 East 38th Street, 23i') %>%
+  filter(address != '154 Attorney Street, 701') %>%
+  filter(address != '130 West 70th Street, 12a') %>%
+  filter(address != '640 West End Avenue, 11c') %>%
+  filter(address != '2109 Broadway, 14-31') %>%
+  filter(address != '2109 Broadway, 13-87') %>%
+  filter(address != '250 West 90th Street, 18j') %>%
+  filter(address != '21 South End Avenue, 201') %>%
+  filter(address != '104 West 70th Street, 3g') %>%
+  filter(address != '104 West 70th Street, 10e') %>%
+  filter(address != '565 Broome Street, N5g') %>%
+  filter(address != '225 East 34th Street, 4d') %>%
+  filter(address != '415 East 37th Street, 26k') %>%
+  filter(address != '415 East 37th Street, 9k') %>%
+  filter(address != '240 East 47th Street, 23f') %>%
+  filter(address != '2211 Broadway, Phd') %>%
+  filter(address != '205 East 22nd Street, 5e') %>%
+  filter(address != "300 Rector Place, 3o") %>%
+  filter(address != "300 Rector Place, 3p") %>%
+  filter(address != '104 West 70th Street, 3g') %>%
+  filter(address != '104 West 70th Street, 10e') %>%
+  filter(address != '117 East 57th Street, 28a') %>%
+  filter(address != '117 East 57th Street, 33c') %>%
+  filter(address != '25 Central Park West, 19k') %>%
+  filter(address != '25 Central Park West, 10u') %>%
+  filter(address != '1623 Third Ave, 28j') %>%
+  filter(address != '30 West 90th Street, 7a') %>%
+  filter(address != '111 West 67th Street, 20-L') %>%
+  filter(address != '255 East 49th Street, 4c') %>%
+  filter(address != '155 West 68th Street 11-28') %>%
+  filter(address != '215 West 95th Street, 11l') %>%
+  filter(address != '41 West 72nd Street, 14c') %>%
+  filter(address != '300 East 93rd Street, 22f') %>%
+  filter(address != '32 East 76th Street, 1402') %>%
+  filter(address != '224 East 52nd Street, 16') %>%
+  filter(address != '127 West 82nd Street, 3b') %>%
+  filter(address != '145 East 48th Street, 23c') %>%
+  filter(address != '404 East 79th St, 24d') %>%
+  filter(address != '500 West 43rd Street, 3a') %>%
+  filter(address != '20 West Street, 23d') %>%
+  filter(address != '250 South Street, 29k') %>%
+  filter(address != '345 East 80th Street, 32h') %>%
+  filter(address != '220 East 65th Street' & apartment_number != '24K') %>%
+  filter(address != '318 West 100th Street, 1b') %>%
+  filter(address != '1437 3 Avenue, 16b') %>%
+  filter(address != '1437 3 Avenue, 16c') %>%
+  filter(address != '150 West 51st Street, 14-16') %>%
+  filter(address != '250 East 54th Street, 20b') %>%
+  filter(address != '70 West 139 Street' & apartment_number != '6i') %>%
+  filter(address != '70 West 139 Street, 5a') %>%	
+  filter(address != '70 West 139 Street, 5c') %>%
+  filter(address != '70 West 139th, 3d ') 
+
+View(Manhattan_condos_only)
+
+
+
+
+queens.multi.units =  
+  ifelse(str_detect(Queens_condos_only$address, "(40-35 Ithaca Street, )[1f|2f|3a|3f|4a|4e|4j|5f|5g|6f|6g|6h|6j|6l]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Queens_condos_only$address, "(145-38 34th Avenue, )[3a|5g|6d|7b|7g]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Queens_condos_only$address, "(145-38 34th Avenue, )[4c|6k|7d|7h]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Queens_condos_only$address, "(145-38 34th Avenue, )[3c|3e|3g|6e]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Queens_condos_only$address, "(71-66 Parsons Boulevard, )[5b|6b]"), 'multi property purchase/multi-plex', 
+  ifelse(str_detect(Queens_condos_only$address, "(178-36 Wexford Terrace, )5[ad]"), 'multi property purchase/multi-plex', 'single-unit'))))))
+
+Queens_condos_only$multi.units = queens.multi.units
+
+
+Queens_condos_only = Queens_condos_only %>%
+  filter(address != "40-35 Ithaca Street, 6l") %>%
+  filter(address != "40-35 Ithaca Street, 6j") %>%
+  filter(address != "40-35 Ithaca Street, 6h") %>%
+  filter(address != "40-35 Ithaca Street, 6g") %>%
+  filter(address != "40-35 Ithaca Street, 6f") %>%
+  filter(address != "40-35 Ithaca Street, 5f") %>%
+  filter(address != "40-35 Ithaca Street, 5g") %>%
+  filter(address != "40-35 Ithaca Street, 4j") %>%
+  filter(address != "40-35 Ithaca Street, 4e") %>%
+  filter(address != "40-35 Ithaca Street, 4a") %>%
+  filter(address != "40-35 Ithaca Street, 3a") %>%
+  filter(address != "40-35 Ithaca Street, 2f") %>%
+  filter(address != "40-35 Ithaca Street, 1f") %>%
+  filter(address != "145-38 34th Avenue, 3a") %>%
+  filter(address != "145-38 34th Avenue, 3c") %>%
+  filter(address != "145-38 34th Avenue, 3e") %>%
+  filter(address != "145-38 34th Avenue, 3g") %>%
+  filter(address != "145-38 34th Avenue, 4c") %>%
+  filter(address != "145-38 34th Avenue, 5g") %>%
+  filter(address != "145-38 34th Avenue, 6d") %>%
+  filter(address != "145-38 34th Avenue, 6k") %>% 
+  filter(address != "145-38 34th Avenue, 7b") %>% 
+  filter(address != "145-38 34th Avenue, 7d") %>% 
+  filter(address != "145-38 34th Avenue, 7g") %>% 
+  filter(address != "145-38 34th Avenue, 7h") %>% 
+  filter(address != "71-66 Parsons Boulevard, 5b") %>% 
+  filter(address != "178-36 Wexford Terrace, 5a")
+
+View(Queens_condos_only)
+
+
+
+
+staten.multi.units =  
+  ifelse(str_detect(Staten_condos_only$address, "(6 New Lane), [3g|4m]"), 'multi property purchase/multi-plex', 'single-unit')
+
+Staten_condos_only$multi.units = staten.multi.units
+
+Staten_condos_only = Staten_condos_only %>% 
+  filter(address != '6 New Lane, 4m')
+
+View(Staten_condos_only)
+
+
+```
+
+Ultimately, I've essentially created only one option for duplexes units and suspected multi-unit purchases. Now we want to combine everything into one. 
+
+```{r}
+
+update_NYC_condos = bind_rows(Bronx_condos_only, Brooklyn_condos_only, Manhattan_condos_only, Queens_condos_only, Staten_condos_only)
+
+View(update_NYC_condos)
+
+```
+
+
+PART C: Dealing with the extreme outliers
+
+For the most expensive property in the list (220 Central Park South 50S), this is actually just a single unit. Considering that we are only interested in having single-unit dwellings in our data set for the sake of integrity, it shall remain in the dataset. However, we do need to remove the 2nd most expensive unit since it's clear that it's a multi-unit purchase.  
+
+```{r}
+
+clean_NYC_condos = update_NYC_condos %>%
+  filter(address != "165 East 66th St, Resi")
+
+View(clean_NYC_condos)
+
+```
+
+
+
+STEP 4:  Linear Regression Model for Boroughs in NYC Combined
+
+Let's compare our findings comparing the original NYC Condo dataset (i.e. NYC Condos Original) with our cleaned NYC condo dataset to see if these outliers may have a significant impact on the relationship b/t sale price and gross area. Operating on a null hypothesis, we would assume that by removing both these multi-unit sales and removing duplicates from suspected duplex conversions, there would be no difference b/t these two datasets. 
+
+```{r}
+
+NYC_condos_lm = lm(sale_price ~ gross_square_feet, data = clean_NYC_condos)
+
+NYC_condos_original_lm = lm(sale_price ~ gross_square_feet, data = NYC_Condos_original)
+
+summary(NYC_condos_lm)
+
+summary(NYC_condos_original_lm)
+
+confint(NYC_condos_lm)
+
+confint(NYC_condos_original_lm)
+
+sigma(NYC_condos_lm)
+
+sigma(NYC_condos_original_lm)
+
+
+```
+
+Looking at the confidence intervals of each slope, we see that with the clean_NYC_condos dataset, the CI is [4384.337, 4538.118]. On the otherhand, the confidence intervals for the original NYC_condos dataset, the CI is [1154.636, 1230.802]. This difference in CI is likely attributed to the removal of the multi-unit outliers in our dataset along with duplicate entries for duplexes and condo expansions which impacted price predictions. 
+
+Furthermore, looking at the measure of "lack of fit" of our model, we can see that the residual standard error is much lower with our 'cleaned' data set (RSE = 2919340) compared to the original (RSE = 4744508). Finally looking at the measure of variability b/t gross area on price within each model, we can see that 0.6211 * predicted sale price was explained by the gross square area based on our cleaned data set compared to the 0.3176 found in the original dataset. 
+
+```{r}
+
+ggplot(data = clean_NYC_condos, 
+       aes(x = gross_square_feet, y = sale_price)) +
+  geom_point(aes(color = borough), alpha = 0.3)  + 
+  facet_wrap(~ borough, scales = "free", ncol = 2) +
+  scale_y_continuous(labels = scales :: comma) + 
+  geom_smooth(method = 'lm', se = FALSE) + 
+  theme(panel.background =  element_rect(fill = 'white'),
+        axis.line = element_line(color = 'black')) + 
+  labs(title = "Condo prices across the 5 buroughs of NYC based on square footage after removing multi-unit purchases and condo expansion", 
+       x = "Gross Area (in Sq.Ft)", 
+       y = "Sale Price (in US dollars)")
+
+```
+
+Looking at the data compared to the ones earlier, we see a much clearer degree of directionality (positive) and greater strength of the relationship b/t price and gross area. This is represented by the close-knit spread of the data points. 
+
+
+
+STEP 5: Linear regression model for each borough
+
+```{r}
+
+library(broom)
+
+```
+
+PART A: Created a nested dataframe based on borough 
+ 
+```{r}
+
+NYC_nested = clean_NYC_condos %>% 
+              group_by(borough) %>% 
+              nest()
+
+View(NYC_nested)
+
+# Test to see if it worked
+
+Bronx <- NYC_nested[[2]][[1]]
+Brooklyn = NYC_nested[[2]][[2]]
+Manhattan = NYC_nested[[2]][[3]]
+Queens = NYC_nested[[2]][[4]]
+Staten_Island = NYC_nested[[2]][[5]]
+
+View(Bronx_condos_only) # Worked
+View(Brooklyn_condos_only) # Worked
+View(Manhattan_condos_only) # Worked
+View(Queens_condos_only) # Worked
+View(Staten_condos_only) # Worked
+
+```
+ 
+PART B: Adding a regression model to each borough
+
+```{r}
+
+NYC_coefficients = NYC_nested %>% 
+                    mutate(linear_model = map(.x = data, .f = ~lm(sale_price ~ gross_square_feet, data = .)))
+
+
+Bronx_summary <- summary(NYC_coefficients$linear_model[[1]])
+Brooklyn_summary <- summary(NYC_coefficients$linear_model[[2]])
+Manhattan_summary <- summary(NYC_coefficients$linear_model[[3]])
+Queens_summary <- summary(NYC_coefficients$linear_model[[4]])
+Staten_island_summary <- summary(NYC_coefficients$linear_model[[5]])
+
+```
+An overall look at the R-squared showed that gross area is a reasonably good predictor of sale price for NYC condos.However, Manhattan condo prices appears to be more predicted by this factor as compared to Queens where it is found to be a poorer predictor of variability in sale prices. 
+
+
+PART C: returning coefficient estimates that includes confidence intervals 
+
+```{r}
+
+NYC_coefficients = NYC_coefficients %>% 
+                    mutate(linear_model = map(.x = data,
+                                              .f = ~ lm(sale_price ~ gross_square_feet, data = .))) %>% 
+                    mutate(tidy_coefficients = map(.x = linear_model,
+                                                   .f = tidy,
+                                                   conf.int = TRUE))
+
+View(NYC_coefficients)
+
+```
+
+PART D: Unnesting
+
+```{r}
+NYC_coefficientsII = NYC_coefficients %>% 
+                    select(borough, tidy_coefficients) %>% 
+                    unnest(cols = tidy_coefficients)
+
+NYC_slope = NYC_coefficientsII %>% 
+              filter (term == "gross_square_feet") %>% 
+              arrange(estimate)
+
+View(NYC_slope)
+```
+
+Looking at the factor that gross area predicts sale prices within each borough, it appears that:
+
+- in Staten Island: 1 sqft unit is estimated to increase sale price by about $272 on average
+- in Bronx: 1 sqft unit is estimated to increase sale price by about $649 on average
+- in Queens: 1 sqft unit is estimated to increase sale price by about $730 on average
+- in Brooklyn: 1 sqft unit is estimated to increase sale price by about $1297 on average
+- in Manhattan: 1 sqft unit is estimated to increase sale price by about $4735 on average
+
+
+
+STEP 5: Regression Summary Statistics
+
+```{r}
+
+NYC_summary = clean_NYC_condos %>% 
+                group_by(borough) %>% 
+                nest() %>%
+                mutate(linear_model = map(.x = data,
+                                          .f = ~lm(sale_price ~ gross_square_feet, data = .))) %>%
+                mutate(tidy_summary_stats = map(.x = linear_model, 
+                                                .f = glance))
+
+View(NYC_summary)
+
+NYC_summary_tidy = NYC_summary %>% 
+                      select(borough, tidy_summary_stats) %>% 
+                      unnest(cols = tidy_summary_stats) %>% 
+                      arrange(r.squared)
+
+print(NYC_summary_tidy)
+
+```
+
+Overall, observing the influence of gross area on sale prices within condos in NYC, we see that there is a great deal of variability b/t boroughs. The variance as a result of gross area is highest in Manhattan > Bronx > Brooklyn > Staten Island > Queens. This is best exemplified within the scatterplots where a tighter spread and linearity is most prominent within Manhattan units as compared to Queens. 
+
+
+
+
+EXTRA: Looking at sale prices as a function of gross area by neighborhood
+
+There are 128 different neighborhoods within NYC. In order to best approach this, we will try to examine each borough individually to determine the impact of gross square area on sale prices of condos. 
+
+```{r}
+
+# BROOKLYN
+
+Brooklyn_nested = Brooklyn_condos_only %>% 
+                    group_by(neighborhood) %>% 
+                    nest()
+
+Brooklyn_coefficients = Brooklyn_nested %>% 
+                          mutate(linear_model = map(.x = data, 
+                                                    .f = ~lm(sale_price ~ gross_square_feet, data = .))) %>% 
+                          mutate(tidy_coefficients = map(.x = linear_model,
+                                                         .f = tidy, 
+                                                         conf.int = TRUE)) %>% 
+                          mutate(tidy_summary_stats = map(.x = linear_model,
+                                                          .f = glance)) %>% 
+                          mutate(data_augmented = map2(.x = linear_model,
+                                                       .y = data,
+                                                       .f = augment))
+
+
+Brooklyn_unnest = Brooklyn_coefficients %>% 
+                    select(neighborhood, tidy_coefficients) %>% 
+                    unnest(cols = tidy_coefficients)
+
+Brooklyn_unnestII = Brooklyn_coefficients %>% 
+                    select(neighborhood, tidy_summary_stats) %>% 
+                    unnest(cols = tidy_summary_stats)
+
+Brooklyn_slope = Brooklyn_unnest %>% 
+                  filter(term == "gross_square_feet") %>% 
+                  arrange(estimate)
+
+```
+
+Examining our findings for Brooklyn neighborhoods, it was found that the predicted sale prices of condos range b/t 72.85 (Flatbush-North) to 2333.71 dollars (Canarsie) per 1 sqft. However, it should be noted that this may be impacted by the number of units available within this neighbourhood which may have overinflated the influence of square footage on condo sale prices given it being a largely residential/commerical neighbourhood with little tourist attraction and recent history of crime rate as noted [here](https://www.streetadvisor.com/canarsie-brooklyn-new-york-city-new-york), all of which are [known predictors of condo sale prices](https://www.point2homes.com/news/canada-real-estate/factors-demand-supply-real-estate.html). Furthermore, looking at some of the most popular neighborhoods in Brooklyn as noted [here](https://theculturetrip.com/north-america/usa/new-york/articles/a-guide-to-brooklyns-coolest-neighborhoods/), we see that gross area accounts for a fairly high degree of variability in sale price. On the other hand, areas where gross area seemingly having a lower impact on sale price are noted for being mainly residential areas further away from tourist spots and the main downtown core. 
+
+```{r}
+
+# BRONX
+
+Bronx_nested = Bronx_condos_only %>% 
+                    group_by(neighborhood) %>% 
+                    nest()
+
+Bronx_coefficients = Bronx_nested %>% 
+                          mutate(linear_model = map(.x = data, 
+                                                    .f = ~lm(sale_price ~ gross_square_feet, data = .))) %>% 
+                          mutate(tidy_coefficients = map(.x = linear_model,
+                                                         .f = tidy, 
+                                                         conf.int = TRUE)) %>% 
+                          mutate(tidy_summary_stats = map(.x = linear_model,
+                                                          .f = glance)) %>% 
+                          mutate(data_augmented = map2(.x = linear_model,
+                                                       .y = data,
+                                                       .f = augment))
+
+
+Bronx_unnest = Bronx_coefficients %>% 
+                    select(neighborhood, tidy_coefficients) %>% 
+                    unnest(cols = tidy_coefficients)
+
+Bronx_unnestII = Bronx_coefficients %>% 
+                    select(neighborhood, tidy_summary_stats) %>% 
+                    unnest(cols = tidy_summary_stats)
+
+Bronx_slope = Bronx_unnest %>% 
+                  filter(term == "gross_square_feet") %>% 
+                  arrange(estimate)
+
+```
+
+Looking at the various neighborhoods of the Bronx (the least expensive of the 5 boroughs), we see that the range in which gross area predict condo sales are 217 dollars (Parchester) to 859.30 dollars (Mott Haven/Port Morris) per 1 sqft. Considering that Mott Haven has become a bit of a creative artist hub from its primarily residential/commercial roots as noted [here](https://www.purewow.com/entertainment/mott-haven-bronx-guide) and [here](https://www.nytimes.com/2015/03/29/realestate/mott-haven-the-bronx-in-transition.html), it would make sense that gross area would play a bigger role in its sale price compared to more residential areas such as Parchester which is has been [historically](https://www.amny.com/real-estate/parkchester-affordable-bronx-neighborhood-thrives-with-diversity-1-12598876/) and  as an area of decline until the [2000's](https://welcome2thebronx.com/2020/05/13/parkchester-80-years-later-a-brief-history-of-a-city-within-a-city/). It should be noted that the Kingsbridge/Jerome Park appeared to be the only neighborhood in the Bronx to not have gross area to be associated with condo sale prices. 
+
+```{r}
+
+# MANHATTAN
+
+Manhattan_nested = Manhattan_condos_only %>% 
+                    group_by(neighborhood) %>% 
+                    nest()
+
+Manhattan_coefficients = Manhattan_nested %>% 
+                          mutate(linear_model = map(.x = data, 
+                                                    .f = ~lm(sale_price ~ gross_square_feet, data = .))) %>% 
+                          mutate(tidy_coefficients = map(.x = linear_model,
+                                                         .f = tidy, 
+                                                         conf.int = TRUE)) %>% 
+                          mutate(tidy_summary_stats = map(.x = linear_model,
+                                                          .f = glance)) %>% 
+                          mutate(data_augmented = map2(.x = linear_model,
+                                                       .y = data,
+                                                       .f = augment))
+
+
+Manhattan_unnest = Manhattan_coefficients %>% 
+                    select(neighborhood, tidy_coefficients) %>% 
+                    unnest(cols = tidy_coefficients)
+
+Manhattan_unnestII = Manhattan_coefficients %>% 
+                    select(neighborhood, tidy_summary_stats) %>% 
+                    unnest(cols = tidy_summary_stats)
+
+Manhattan_slope = Manhattan_unnest %>% 
+                  filter(term == "gross_square_feet") %>% 
+                  arrange(estimate)
+
+```
+
+In Manhattan, predicted condo prices as a function of gross area was found to range from 293.82 (Inwood) to 9629.70 (Midtown West) dollars per 1 sqft. This isn't surprising given Manhattan propensity for its accessibility to entertainment, culture, shopping and economic impact. In fact, the top 5 neighborhoods with the highest predicted condo sale price as a function of gross-area happen to be within the most expensive neighborhoods in Manhattan as noted [here](https://www.investopedia.com/articles/personal-finance/092515/most-expensive-neighborhoods-manhattan.asp). It should be noted that only Inwood appeared to be the only neighborhood where gross area was not significantly associated with condo sale prices. In fact, this neighborhood has been noted as one of the relatively [more affordable neighboorhoods in Manhattan](https://streeteasy.com/blog/upper-manhattan-inwood/). Nevertheless, gross area appears to be a major factor in attributing to the variability of sale prices of condos within Manhattan. 
+
+```{r}
+
+# QUEENS
+
+Queens_nested = Queens_condos_only %>% 
+                    group_by(neighborhood) %>% 
+                    nest()
+
+Queens_coefficients = Queens_nested %>% 
+                          mutate(linear_model = map(.x = data, 
+                                                    .f = ~lm(sale_price ~ gross_square_feet, data = .))) %>% 
+                          mutate(tidy_coefficients = map(.x = linear_model,
+                                                         .f = tidy, 
+                                                         conf.int = TRUE)) %>% 
+                          mutate(tidy_summary_stats = map(.x = linear_model,
+                                                          .f = glance)) %>% 
+                          mutate(data_augmented = map2(.x = linear_model,
+                                                       .y = data,
+                                                       .f = augment))
+
+
+Queens_unnest = Queens_coefficients %>% 
+                    select(neighborhood, tidy_coefficients) %>% 
+                    unnest(cols = tidy_coefficients)
+
+Queens_unnestII = Queens_coefficients %>% 
+                    select(neighborhood, tidy_summary_stats) %>% 
+                    unnest(cols = tidy_summary_stats)
+
+Queens_slope = Queens_unnest %>% 
+                  filter(term == "gross_square_feet") %>% 
+                  arrange(estimate)
+
+```
+
+Examining the impact of gross area on sale prices across the various neighborhoods of Queens, we see that contrary to the other buroughs, gross area appears to account for less of the variability in condo sale prices with about 10 of the 24 being in the low to moderate range. The range in which gross area predicts condo sale prices range from 115.37 (Far Rockaway) to 1152.80 (Woodside) dollars per 1 sqft. There were several neighborhoods where gross area was not significantly associated with condo sale prices (Rockaway Park, Far Rockaway, Jamaica, Briarwood and Middle Village). Notably Rockaway Park and Far Rockaway is essentially a [beachfront neighborhood](https://nymag.com/urbanist/article/rockaway-beach-guide-bars.html) that primarily serves as a getaway spot from the city with very little else there in terms of daily entertainment. As such, it would make sense to not be as impacted as others by square footage as most aren't really going to live there. Whilst the neighbourhood of Jamaica and [Briarwood](https://www.streetadvisor.com/briarwood-queens-new-york-city-new-york) are notorious residential neighborhoods, but have been said to have a pretty rough area historically as noted [here](https://www.reddit.com/r/Queens/comments/ere6f7/is_living_in_jamaica_queens_really_that_bad/) and [here](https://www.reddit.com/r/Queens/comments/47ag3a/how_safe_is_jamaica/), particularly in the 1980's and 1990's, which may impact the influence of gross area on sale prices.    
+
+```{r}
+
+Staten_nested = Staten_condos_only %>% 
+                    group_by(neighborhood) %>% 
+                    nest()
+
+Staten_coefficients = Staten_nested %>% 
+                          mutate(linear_model = map(.x = data, 
+                                                    .f = ~lm(sale_price ~ gross_square_feet, data = .))) %>% 
+                          mutate(tidy_coefficients = map(.x = linear_model,
+                                                         .f = tidy, 
+                                                         conf.int = TRUE)) %>% 
+                          mutate(tidy_summary_stats = map(.x = linear_model,
+                                                          .f = glance)) %>% 
+                          mutate(data_augmented = map2(.x = linear_model,
+                                                       .y = data,
+                                                       .f = augment))
+
+
+Staten_unnest = Staten_coefficients %>% 
+                    select(neighborhood, tidy_coefficients) %>% 
+                    unnest(cols = tidy_coefficients)
+
+Staten_unnestII = Staten_coefficients %>% 
+                    select(neighborhood, tidy_summary_stats) %>% 
+                    unnest(cols = tidy_summary_stats)
+
+Staten_slope = Staten_unnest %>% 
+                  filter(term == "gross_square_feet") %>% 
+                  arrange(estimate)
+```
+
+Examining Staten Island, we see that the influence of gross area on predicting condo sale prices range from 11.91 (Great Kills) to 771.12 (New Brighton) dollars per 1 sqft. Furthermore, looking at the influence of gross area on condo sale prices, there is a great divide b/t the 10 neighborhoods with half being low variability whilst the rest is moderate-to-high variability. It is important to note that the neighbourhood with lower gross area-to-sale price ratio are primarily suburban areas with tons of residential homes. Nevertheless, in comparison to the other boroughs, condo prices within neighborhoods for the most part in Staten Island appear to be less impacted by gross area. One possibility may be related to the limited "urban sprawl" in this borough as it's often seen as a separate area from NYC and more of a suburban area [away from the bustling city life](https://www.tripadvisor.com/Tourism-g48682-Staten_Island_New_York-Vacations.html). In fact, it's often considered the ["Forgotten Borough"](https://www.thrillist.com/lifestyle/new-york/staten-island/staten-island-forgotten-boroughs-of-nyc) due to its isolation from the rest of NYC due to a lack of a subway system + need to use the ferry to get to and from there. 
