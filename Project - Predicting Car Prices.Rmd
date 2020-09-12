@@ -1,0 +1,777 @@
+---
+title: 'Project: Predicting Car Prices'
+author: "Michael Hoang"
+date: "10/09/2020"
+output: html_document
+---
+
+In this project, we will be working on developing a model to predict market prices for cars utilizing the various characteristics of a vehicle through the use of K-nearest number algorithm. 
+
+Using a dataset available from the [UCI Machine Learning Archive](https://archive.ics.uci.edu/ml/datasets/automobile) collected based on car guide + insurance information in 1985. 
+
+
+STEP 1: Reading + Cleaning the dataset
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(broom)
+library(lattice)
+library(ggplot2)
+library(knitr)
+library(aod)
+library(caret)
+library(stringr)
+library(tidyverse)
+library(purrr)
+library(readr)
+library(readxl)
+library(magrittr)
+
+cars <- read.csv("C:/Users/micha/Downloads/imports-85.data", header = FALSE)
+colnames(cars) <- c('symboling', 'normalized_losses', 'make', 'fuel_type', 'aspiration', 'num_doors', 'body_style', 
+                    'drive_wheels', 'engine_location', 'wheel_base', 'length', 'width', 'height', 'curb_weight', 'engine_type',
+                    'num_cylinders', 'engine_size', 'fuel_system', 'bore', 'stroke', 'compression', 'horsepower',
+                    'peak_rpm', 'city_mpg', 'highway_mpg', 'price')
+
+str(cars)
+
+```
+Based on our findings, we see the following: 
+
+1) numeric: symboling, wheel_base, length, width, height, curb_weight, engine_size, compression, city_mpg, highway_mpg
+
+2) characters: normalized_losses, make, fuel_type, aspiration, num_doors, body_size, drive_wheels, engine_location, engine_type, num_cylinders, fuel_type, bore, stroke, horsepower, peak_rpm, price
+
+Looking at this, we need to clean things up a bit with reassigning several variables to numeric variables and make a numeric-only dataframe. 
+
+```{r}
+
+cars <- cars %>% 
+          mutate(
+            price = as.numeric(price),
+            normalized_losses = as.numeric(normalized_losses),
+            bore = as.numeric(bore),
+            stroke = as.numeric(stroke), 
+            horsepower = as.numeric(horsepower), 
+            peak_rpm= as.numeric(peak_rpm)
+          )
+
+numeric_only = cars %>%  select(-make, -fuel_type, -aspiration, -num_doors, -body_style, -drive_wheels, -engine_location, -engine_type, -fuel_system, -num_cylinders)
+
+na_counts = numeric_only %>% is.na() %>% colSums() 
+
+```
+
+Now that we have a numeric-only dataset, we need to handle the number of missing entries in this dataset. 
+
+There are two approaches that we can use. 
+
+```{r}
+
+# COMPLETE-CASES: 
+
+cars_numeric_only_1 = numeric_only %>% 
+              filter(!is.na(price)) %>% 
+              filter(!is.na(normalized_losses)) %>%
+              filter(!is.na(bore)) %>%
+              filter(!is.na(stroke)) %>%
+              filter(!is.na(horsepower)) %>%
+              filter(!is.na(peak_rpm))
+
+View(cars_numeric_only_1)
+```
+
+Looking at this first approach, we see that we are essentially going to drop 22% of the original dataset. 
+
+As a result, this introduces a significant bias into our future predictive model along with a reduction in our statistical power of our model. 
+
+```{r}
+
+# IMPUTATION:
+
+# Assessment of rows with missing values in the dataset
+
+na_logical = is.na(numeric_only)
+na.dataframe = data.frame(is.na(numeric_only))
+na.dataframe = na.dataframe %>% mutate(total_na = rowSums(.[1:16]))
+na_counts_pct = na_counts *100 / nrow(na_logical)
+na.df = data.frame(na_counts = na_counts, na_pct = na_counts_pct)
+na.df = data.frame(t(na.df))
+
+
+```
+
+Looking at our findings, it appears that the most significant missing value comes from normalized losses whilst the rest appear to have missing values constituting 1%-2%. 
+
+Examining the data, we found that:
+
+1) Those with missing values with bore also had missing values for stroke
+
+2) Whose with missing values with horsepower also had missing values for peak_rpm
+
+3) Missing values for price was independent from missing values with bore, stroke, horsepower and peak_rpm 
+
+4) All these cases also had missing values for normalized_losses 
+
+Since we are ultimately looking at price, we can first remove rows with missing prices 
+
+```{r}
+
+update_numeric_only = numeric_only %>% filter(!is.na(price))
+
+```
+
+As to how to handle the missing values of the rest, let's look at the summary statistics of these variables.
+
+```{r}
+
+mean(update_numeric_only$bore, na.rm = TRUE)
+sd(update_numeric_only$bore, na.rm = TRUE)
+median(update_numeric_only$bore, na.rm = TRUE) 
+# Seeing as how mean and median are similar, it is likely parametric distribution. Thus imputation with the mean would likely be acceptable.
+
+mean(update_numeric_only$stroke, na.rm = TRUE)
+sd(update_numeric_only$stroke, na.rm = TRUE)
+median(update_numeric_only$stroke, na.rm = TRUE) 
+# Seeing as how mean and median are similar, it is likely parametric distribution. Thus imputation with the mean would likely be acceptable. 
+
+mean(update_numeric_only$horsepower, na.rm = TRUE)
+sd(update_numeric_only$horsepower, na.rm = TRUE)
+median(update_numeric_only$horsepower, na.rm = TRUE)
+
+ggplot(data = update_numeric_only,
+       aes(x = horsepower)) +
+  geom_histogram(bins = 20)
+
+# Looking at the distribution of the horsepower, it seems to be a right-skewed parametric distribution. 
+# This was validated by the large differential b/t median and mean values for horsepower. 
+# Given this distribution in our model, we will fill it with the most appropriate measure of central tendency (i.e. median value) due to is robustness against outliers. 
+
+mean(update_numeric_only$peak_rpm, na.rm = TRUE)
+sd(update_numeric_only$peak_rpm, na.rm = TRUE)
+median(update_numeric_only$peak_rpm, na.rm = TRUE) 
+# Seeing as how mean and median are similar, it is likely parametric distribution. Thus imputation with the mean would likely be acceptable. 
+
+mean(update_numeric_only$normalized_losses, na.rm = TRUE)
+sd(update_numeric_only$normalized_losses, na.rm = TRUE)
+median(update_numeric_only$normalized_losses, na.rm = TRUE)
+
+ggplot(data = update_numeric_only,
+       aes(x = normalized_losses)) +
+  geom_histogram(bins = 20)
+
+# Looking at the distribution of the horsepower, it seems to be a right-skewed parametric distribution. 
+# This was validated by the large differential b/t median and mean values for horsepower. 
+# As such, we will fill it with the median value instead of mean value as it's a better measure of central tendency 
+
+update_numeric_only = update_numeric_only %>% 
+                        mutate(
+                          bore = ifelse(is.na(bore), round(mean(bore, na.rm = TRUE), 2), bore),
+                          stroke = ifelse(is.na(stroke), round(mean(stroke, na.rm = TRUE), 2), stroke),
+                          horsepower = ifelse(is.na(horsepower), median(horsepower, na.rm = TRUE), horsepower),
+                          peak_rpm = ifelse(is.na(peak_rpm), round(mean(peak_rpm, na.rm = TRUE), 2), peak_rpm),
+                          normalized_losses = ifelse(is.na(normalized_losses), median(normalized_losses, na.rm = TRUE), normalized_losses)
+                        )
+
+clean_cars_numeric = update_numeric_only
+
+View(update_numeric_only)
+head(update_numeric_only)
+
+```
+
+For the purpose of building our predictive model, we will be doing so with the imputted dataframe going forward. 
+
+However, we will also look at the complete-cases only dataset in the extra section. 
+
+
+
+STEP 2: Examining Relationships b/t Predictors
+
+```{r}
+
+featurePlot(clean_cars_numeric$horsepower, clean_cars_numeric$price, labels = c('horsepower','price'))
+# There appears to be some evidence of a positive association b/t horsepower and sale price of cars
+
+featurePlot(clean_cars_numeric$peak_rpm, clean_cars_numeric$price, labels = c('peak RPM','price'))
+# There appears to be no association b/t peak RPM and sale price of cars 
+
+featurePlot(clean_cars_numeric$city_mpg, clean_cars_numeric$price, labels = c('city MPG','price'))
+# There appears to be a negative association between city fuel consumption and sale price of cars
+
+featurePlot(clean_cars_numeric$highway_mpg, clean_cars_numeric$price, labels = c('highway MPG','price'))
+# There appears to be a negative association between highway fuel consumption and sale price of cars
+
+featurePlot(clean_cars_numeric$compression, clean_cars_numeric$price, labels = c('compression','price'))
+# There appears to be a bipartisian distribution b/t compression and sale price of cars -> likely no association
+
+featurePlot(clean_cars_numeric$stroke, clean_cars_numeric$price, labels = c('stroke','price'))
+# There appears to be no association b/t stroke and sale price of cars
+
+featurePlot(clean_cars_numeric$bore, clean_cars_numeric$price, labels = c('bore','price'))
+# There appears to be a very weak positive trend b/t bore and sale price of cars
+
+featurePlot(clean_cars_numeric$engine_size, clean_cars_numeric$price, labels = c('engine size','price'))
+# There is a positive relationship b/t increasing engine size and sale price of cars
+
+featurePlot(clean_cars_numeric$curb_weight, clean_cars_numeric$price, labels = c('curb_weight','price'))
+# There appears to be somewhat of a positive relationship (fairly linear) b/t curb weight of the vehicle and sale price
+
+featurePlot(clean_cars_numeric$height, clean_cars_numeric$price, labels = c('height','price'))
+# There doesn't appear to be a linear relationship at all. 
+
+featurePlot(clean_cars_numeric$length, clean_cars_numeric$price, labels = c('length','price'))
+# There seems to be a somewhat poor positive relationship b/t length of car and its sale price
+
+featurePlot(clean_cars_numeric$wheel_base, clean_cars_numeric$price, labels = c('wheel base','price'))
+# There appears to be a very poor positive relationship (bordering no relationship) b/t wheelbase of the car and its sale price 
+
+featurePlot(clean_cars_numeric$normalized_losses, clean_cars_numeric$price, labels = c('normalized losses','price'))
+# There appears to be no relationship b/t sale price and normalized losses
+
+featurePlot(clean_cars_numeric$symboling, clean_cars_numeric$price, labels = c('symboling','price'))
+# There appears to be no relationship b/t sale price and normalized losses
+
+ggplot(data = clean_cars_numeric,
+       aes(x = price)) +
+  geom_histogram(bins = 10)
+
+mean(clean_cars_numeric$price) # 13207.13
+sd(clean_cars_numeric$price) # 7947.07
+median(clean_cars_numeric$price) # 10295.00
+max(clean_cars_numeric$price) # 45400
+2*sd(clean_cars_numeric$price) + mean(clean_cars_numeric$price) # 29101.26 (assume as the cut-off of what car prices to be within expectation)
+
+```
+
+Based of the measure of centrality of sale price, there appears to be a right-skewed distribution of car sale prices. 
+
+If we were to consider a normalized distribution to be in the range of mean +/- 2 SD as an expected price range, we see that there are 14 cars that were found to have prices equal to or greater than this range. 
+
+Let's examine these outlier in compraison to cars within expected price range. 
+```{r}
+
+pricy_cars <- clean_cars_numeric %>%
+                mutate(outliers = ifelse(price >= 29101.26, "outlier", "not"))
+
+View(pricy_cars)
+
+summarization = pricy_cars %>% 
+  select(outliers, price, highway_mpg, city_mpg, peak_rpm, horsepower, engine_size, curb_weight) %>%
+  group_by(outliers) %>%
+  summarize(
+    mean_price = mean(price), sd_price = sd(price), median_price = median(price), 
+    mean_highway = mean(highway_mpg), sd_highway = sd(highway_mpg), median_highway = median(highway_mpg), 
+    mean_city = mean(city_mpg), sd_city = sd(city_mpg), median_city = median(city_mpg),
+    mean_rpm = mean(peak_rpm), sd_rpm = sd(peak_rpm), median_rpm = median(peak_rpm),
+    mean_horsepower = mean(horsepower), sd_horsepower = sd(horsepower), median_horsepower = median(horsepower),
+    mean_engine = mean(engine_size), sd_engine = sd(engine_size), median_engine = median(engine_size),
+    mean_weight = mean(curb_weight), sd_weight = sd(curb_weight), median_weight = median(curb_weight)
+  )
+
+View(summarization)
+
+```
+
+These outlier vehicles were found to have:
+
+1) significantly lower highway and city fuel consumption
+2) significantly greater horsepower, engine size and weight 
+
+However given a closer look at these vehicles, it might be that luxury-brand vehicles (based on names of the automakers) would have constitute a greater premium in terms of pricing. 
+As these factors are what is going to impact sales price + with the trends being in line with non-outlier vehicles, we will make the decision to keep these outliers in our dataset. 
+
+
+STEP 3: Setting up our Model
+
+PART A: Splitting up the dataset into a training set and testing set. 
+
+For our purpose of maximizing variance whilst minizing inherent bias, we will be using a 80% training to 20% testing split.
+
+```{r}
+
+set.seed(1) # For the sake of reproducibility 
+
+train_indices = createDataPartition(y = clean_cars_numeric[['price']], 
+                                    p =  0.8, 
+                                    list = FALSE)
+
+testing_listings = clean_cars_numeric[-train_indices,] # Should be about 40 
+training_listings = clean_cars_numeric[train_indices, ] # Should be about 161
+
+```
+
+PART B: Hyperparameter Tuning 
+
+For this process, we will be using the Grid Search method to tune hyperparameters in our model. 
+
+As our intention is to utilize the KNN approach, there will only be one parameter (i.e. k) which we will find a range for different combination. 
+
+```{r}
+
+cv_folds = 15 #it's the sqrt(n) where n = 205
+
+knn_grid = expand.grid(k = 1:100)
+
+train_control = trainControl(method = 'cv', number = cv_folds)
+
+```
+
+PART C: Create the KNN Model 
+
+This will be the longest part as it will be a series of experimentation of figuring out which is the best approach to predicting car price. However, there are several approaches to this. 
+
+FIRST: Rationalizing predictor selection
+
+Using multiple resources that had explored the topic of vehicle prices (both new and used) as listed [here](https://auto.howstuffworks.com/buying-selling/car-resale-value.htm),[here](https://www.wewantanycar.com/guides/factors-affecting-car-value), [here](https://cms.adesa.eu/en/blogs/blog/2016/07/11/7-factors-that-determine-the-price-of-a-car), [here](https://www.cashpoint4cars.co.uk/blog/15-factors-affect-price-your-car/#), we see that several factors within our dataframe may be ideal candidates as predictors: 1) city + highway mileage & 2) engine size
+
+Looking past this, we can also speculate that horsepower + torque may also play a role considering it's [impact on fuel consumption](https://www.nrcan.gc.ca/energy/efficiency/energy-efficiency-transportation-and-alternative-fuels/choosing-right-vehicle/tips-buying-fuel-efficient-vehicle/factors-affect-fuel-efficiency/horsepower/21028). 
+
+Furthermore, it can also be speculated that car size may play a role in vehicle pricing given its relationship to insurance rates as noted [here](https://coverhound.com/insurance-learning-center/how-car-size-affects-your-insurance-rates), the change in the current landscape of the marketplace as noted [here](https://cars.usnews.com/cars-trucks/why-are-cars-so-expensive), and how the influence of personal economics impact car purchasing habits as noted [here](https://www.researchgate.net/publication/263377095_An_exploration_of_factors_influencing_car_purchasing_decisions)
+
+Thus, we will assume a comparison of several different models for comparing: 
+
+(A) A model containing city MPG and highway MPG
+
+(B) A model containing city MPG, highway MPG and engine size
+
+(C) A model containing city MPG, highway MPG, engine size and horsepower
+
+(D) A model containing city MPG, highway MPG, engine size, horsepower and torque
+
+(E) A model containing city MPG, highway MPG, engine size, horsepower, torque and curb weight
+
+(F) A model containing city MPG, highway MPG, engine size, horsepower, torque, curb weight and length
+
+(G) A model containing city MPG, highway MPG, engine size, horsepower, torque, curb weight, length and width
+
+(H) A model containing city MPG, highway MPG, engine size, horsepower, torque, curb weight, length, width and height
+
+
+```{r}
+
+knn_model_1 = train(price ~ city_mpg + highway_mpg,
+                    data = clean_cars_numeric,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_2 = train(price ~ city_mpg + highway_mpg + engine_size,
+                    data = clean_cars_numeric,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_3 = train(price ~ city_mpg + highway_mpg + engine_size + horsepower,
+                    data = clean_cars_numeric,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_4 = train(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm,
+                    data = clean_cars_numeric,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_5 = train(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm + curb_weight,
+                    data = clean_cars_numeric,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_6 = train(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm + curb_weight + length,
+                    data = clean_cars_numeric,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_7 = train(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm + curb_weight + length +  width,
+                    data = clean_cars_numeric,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_8 = train(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm + curb_weight + length +  width + height,
+                    data = clean_cars_numeric,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+```
+
+
+SECOND: Data Dredging Approach
+
+This is essentially the "throw it against the wall and see what sticks" approach, where we will go through each variable and see what is best variable/parameter to add into our mode to best predict car prices. 
+
+Whilst we can do so by manually adding each variable individually and see what sticks (i.e. one model has price ~ city_mpg, the other has price ~ horsepower, etc.), we can use a stepwise regression analysis to look at seeing which variable is retained based on our dataset. 
+
+We will retain the model based on AIC scores 
+
+```{r}
+
+library(MASS)
+library(leaps)
+
+
+
+stepwise_model = train(price ~., # includes all variables within the dataframe
+                       data = clean_cars_numeric,
+                       trControl = train_control, 
+                       method = 'leapSeq',
+                       preProcess = c('center', 'scale'),
+                       tuneGrid = data.frame(nvmax = 1:15)) #nvmax corresponding to a tuning parameter corresponds to the maximum number of predictors to be incorporated
+
+
+# Another approach to using stepwise regression 
+stepwise_model_A = train(price ~., 
+                         data = clean_cars_numeric,
+                         method = 'lmStepAIC',
+                         trControl = train_control,
+                         trace = FALSE)
+
+# Another approach to using bi-directional stepwise regression 
+
+linear_model_all <- lm(price ~., data = clean_cars_numeric)
+stepwise_model_B <- stepAIC(linear_model_all, direction = "both", trace = FALSE)
+stepwise_model_B
+
+```
+
+
+PART D: Evaluate the models. 
+
+Let's see how these models turn out. 
+
+```{r}
+
+# The Educated-Guess Approach
+
+testing = testing_listings %>% 
+  mutate(
+    model_one_prediction = predict(knn_model_1, newdata = testing_listings),
+    model_two_prediction = predict(knn_model_2, newdata = testing_listings),
+    model_three_prediction = predict(knn_model_3, newdata = testing_listings),
+    model_four_prediction = predict(knn_model_4, newdata = testing_listings),
+    model_five_prediction = predict(knn_model_5, newdata = testing_listings),
+    model_six_prediction = predict(knn_model_6, newdata = testing_listings),
+    model_seven_prediction = predict(knn_model_7, newdata = testing_listings),
+    model_eight_prediction = predict(knn_model_8, newdata = testing_listings),
+    sq_error_model_one = (price - model_one_prediction)^2,
+    sq_error_model_two = (price - model_two_prediction)^2,
+    sq_error_model_three = (price - model_three_prediction)^2,
+    sq_error_model_four = (price - model_four_prediction)^2,
+    sq_error_model_five = (price - model_five_prediction)^2,
+    sq_error_model_six = (price - model_six_prediction)^2,
+    sq_error_model_seven = (price - model_seven_prediction)^2,
+    sq_error_model_eight = (price - model_eight_prediction)^2
+  )
+
+long_testing = testing %>% 
+  pivot_longer(
+    cols =  sq_error_model_one:sq_error_model_eight,
+    names_to = 'model',
+    values_to = 'sq_error'
+  )
+
+rmse_by_model = long_testing %>% 
+                  group_by(model) %>%
+                  summarize(rmse = sqrt(mean(sq_error)))
+
+summed_model_a = lm(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm + curb_weight, data = clean_cars_numeric)
+summed_model_b = lm(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm + curb_weight + length, data = clean_cars_numeric)
+summed_model_c = lm(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm + curb_weight + length + width + height, data = clean_cars_numeric)
+
+predictions_model_a <- predict(summed_model_a, newdata = testing_listings)
+predictions_model_b <- predict(summed_model_b, newdata = testing_listings)
+predictions_model_c <- predict(summed_model_c, newdata = testing_listings)
+
+postResample(pred = predictions_model_a, obs = testing_listings$price) # RMSE = 3348.235
+postResample(pred = predictions_model_b, obs = testing_listings$price) # RMSE = 3345.551
+postResample(pred = predictions_model_c, obs = testing_listings$price) # RMSE = 3141.412
+
+```
+
+Looking at the above findings, we see that the top 3 models that appear to have performed the 'best' (based on RMSE) are 
+
+1) KNN_model_5: contains the parameters city_mpg, highway_mpg, engine_size, horsepower, peak_rpm and curb_weight; the model seems to perform the best with a single closest neighbour 
+
+2) KNN_model_6: contains the parameters city_mpg, highway_mpg, engine_size, horsepower, peak_rpm, curb_weight and length; the model seems to perform the best with a single closest neighbour 
+
+3) KNN_model_8: contains the parameters city_mpg, highway_mpg, engine_size, horsepower, peak_rpm, curb_weight, length, width and height; the model seems to perform the best with a single closest neighbour 
+
+However, looking at the RMSE and the R-squared of each model, we see that Model # 8 had the highest score whereby it was predictive of 82.05% of the variance in car prices.  
+
+```{r}
+
+# Stepwise Regression Approach
+
+View(stepwise_model)
+
+stepwise_model$results 
+
+summary(stepwise_model$finalModel) 
+
+summarized_model = lm(price ~ city_mpg + peak_rpm + horsepower + compression + stroke + engine_size + height + width, data = clean_cars_numeric)
+
+summary(summarized_model)
+
+prediction_summarized_model_a = predict(summarized_model, newdata = testing_listings)
+
+postResample(pred = prediction_summarized_model_a, obs = testing_listings$price) # RMSE = 3083.854
+
+
+```
+
+Within the course of identifying the number of predictors to be included into the model, it appears as those the best model had included 8 variables.
+
+These 8 variables include: width, height, engine size, stroke, compression, horsepower, torque and city fuel consumption. 
+
+Looking at this model, it seems that this particular model could explain ~ 83.78% variance of predicted car prices. 
+
+
+```{r}
+
+# Stepwise Regression Approach - Option B
+
+View(stepwise_model_A)
+
+stepwise_model_A$results
+
+stepwise_model_A$finalModel
+
+summary(stepwise_model_A$finalModel)
+
+summarize_model_A = lm(price ~ peak_rpm + horsepower + compression + stroke + engine_size + height + width, data = clean_cars_numeric)
+
+summary(summarize_model_A)
+
+prediction_summarize_model_a = predict(summarize_model_A, newdata = testing_listings)
+
+postResample(pred = prediction_summarize_model_a, obs = testing_listings$price) # RMSE = 3136.352
+
+
+# Stepwise Regression Approach - Option C
+
+View(stepwise_model_B)
+
+stepwise_model_B 
+
+summary(stepwise_model_B)
+
+prediction_stepwise_model_B = predict(stepwise_model_B, newdata = testing_listings)
+
+postResample(pred = prediction_stepwise_model_B, obs = testing_listings$price) # RMSE = 3136.352
+
+```
+
+Within the course of identifying the number of predictors to be included into the model, it appears as those the best model had included 7 variables.
+
+These 7 variables include: width, height, engine size, stroke, compression, horsepower and torque.
+
+Looking at this model, it seems that this particular model could explain ~ 83.72% variance of predicted car prices. 
+
+NOTE: it is interesting to note that whilst these last two models appeared to perform better compared to the educated-guess approach, it is mariginally poorer in predicting car prices with the inclusion of city fuel consumption as a metric. 
+
+
+CONCLUSION
+
+Overall looking at the impact of car characteristics influencing car prices, it seems as though the major players are: car width, car length, engine size, engine stroke, engine compression, horsepower, torque and city fuel consumption based on our model. It should be noted that further analysis should be performed when taking into consideration of variables that are categorical/nominal in nature such as branding, bodytype, etc. 
+
+
+
+
+
+EXTRA: Analysis Using the complete-cases dataset. 
+
+STEP 1: Trying the educated-guess approach
+
+```{r}
+
+train_indicesA = createDataPartition(y = cars_numeric_only_1[['price']], 
+                                    p =  0.8, 
+                                    list = FALSE)
+
+
+cv_folds = 13 # it's the sqrt(n) where n = 160
+
+knn_grid = expand.grid(k = 1:100)
+
+train_control = trainControl(method = 'cv', number = cv_folds)
+
+
+
+testing_listingsA = cars_numeric_only_1[-train_indicesA,] # Should be about 32
+training_listingsA = cars_numeric_only_1[train_indicesA, ] # shoudl be 128
+
+
+knn_model_1A = train(price ~ city_mpg + highway_mpg,
+                    data = cars_numeric_only_1,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_2A = train(price ~ city_mpg + highway_mpg + engine_size,
+                    data = cars_numeric_only_1,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_3A = train(price ~ city_mpg + highway_mpg + engine_size + horsepower,
+                    data = cars_numeric_only_1,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_4A = train(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm,
+                    data = cars_numeric_only_1,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_5A = train(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm + curb_weight,
+                    data = cars_numeric_only_1,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_6A = train(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm + curb_weight + length,
+                    data = cars_numeric_only_1,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_7A = train(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm + curb_weight + length +  width,
+                    data = cars_numeric_only_1,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+knn_model_8A = train(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm + curb_weight + length +  width + height,
+                    data = cars_numeric_only_1,
+                    method = 'knn',
+                    trControl = train_control,
+                    preProcess = c('center', 'scale'), 
+                    tuneGrid = knn_grid) 
+
+
+testingA = testing_listingsA %>% 
+  mutate(
+    model_one_prediction = predict(knn_model_1A, newdata = testing_listingsA),
+    model_two_prediction = predict(knn_model_2A, newdata = testing_listingsA),
+    model_three_prediction = predict(knn_model_3A, newdata = testing_listingsA),
+    model_four_prediction = predict(knn_model_4A, newdata = testing_listingsA),
+    model_five_prediction = predict(knn_model_5A, newdata = testing_listingsA),
+    model_six_prediction = predict(knn_model_6A, newdata = testing_listingsA),
+    model_seven_prediction = predict(knn_model_7A, newdata = testing_listingsA),
+    model_eight_prediction = predict(knn_model_8A, newdata = testing_listingsA),
+    sq_error_model_one = (price - model_one_prediction)^2,
+    sq_error_model_two = (price - model_two_prediction)^2,
+    sq_error_model_three = (price - model_three_prediction)^2,
+    sq_error_model_four = (price - model_four_prediction)^2,
+    sq_error_model_five = (price - model_five_prediction)^2,
+    sq_error_model_six = (price - model_six_prediction)^2,
+    sq_error_model_seven = (price - model_seven_prediction)^2,
+    sq_error_model_eight = (price - model_eight_prediction)^2
+  )
+
+long_testingA = testingA %>% 
+  pivot_longer(
+    cols =  sq_error_model_one:sq_error_model_eight,
+    names_to = 'model',
+    values_to = 'sq_error'
+  )
+
+rmse_by_modelA = long_testingA %>% 
+                  group_by(model) %>%
+                  summarize(rmse = sqrt(mean(sq_error)))
+
+
+projected_model_a = lm(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm + curb_weight + length +  width + height, data = cars_numeric_only_1)
+
+summary(projected_model_a)
+
+projected_model_b = lm(price ~ city_mpg + highway_mpg + engine_size + horsepower + peak_rpm + curb_weight + length , data = cars_numeric_only_1)
+
+summary(projected_model_b)
+
+predictions_model_1 <- predict(projected_model_a, newdata = testing_listingsA)
+
+predictions_model_2 <- predict(projected_model_b, newdata = testing_listingsA)
+
+postResample(pred = predictions_model_1, obs = testing_listingsA$price) # RMSE = 1999.039
+postResample(pred = predictions_model_2, obs = testing_listingsA$price) # RMSE = 2066.850
+
+```
+
+Looking at the above findings, it was found that the eighth model appeared to be better performing model based on RMSE score and R-squared where our model appeared to predict 82.74% of the variance in car prices using the completed-cases dataset. 
+
+This model showed all of the selected variables as a better measure of 
+
+```{r}
+
+stepwise_model_A = train(price ~., 
+                       data = cars_numeric_only_1,
+                       trControl = train_control, 
+                       method = 'leapSeq',
+                       preProcess = c('center', 'scale'),
+                       tuneGrid = data.frame(nvmax = 1:15))
+
+View(stepwise_model_A)
+
+stepwise_model_A$results 
+
+summary(stepwise_model_A$finalModel) # it appears only one predictor variable was retained
+
+summarized_model_A1 = lm(price ~ curb_weight, data = cars_numeric_only_1)
+
+summary(summarized_model_A1)
+
+prediction_summarized_model_a1 = predict(summarized_model_A1, newdata = testing_listingsA)
+
+postResample(pred = prediction_summarized_model_a1, obs = testing_listingsA$price) # RSME = 1985.155, R-squared = 0.8417
+
+
+# second method
+
+stepwise_model_B = train(price ~., 
+                         data = cars_numeric_only_1,
+                         method = 'lmStepAIC',
+                         trControl = train_control,
+                         trace = FALSE)
+
+View(stepwise_model_B)
+
+stepwise_model_B$results 
+
+summary(stepwise_model_B$finalModel) # 
+
+summarized_model_B1 = lm(price ~ wheel_base + length + width + curb_weight + engine_size + bore + stroke + compression + horsepower + peak_rpm, data = cars_numeric_only_1)
+
+summary(summarized_model_B1)
+
+prediction_summarized_model_B1 = predict(summarized_model_B1, newdata = testing_listingsA)
+
+postResample(pred = prediction_summarized_model_B1, obs = testing_listingsA$price) #RSME = 2016.58, R-squared = 0.8415
+
+```
+
+Looking at the use of a stepwise regression analysis, it appeared to show that within complete-cases analysis, only curb_weight was retained as a significant predictor whereby the model appeared to predict ~ 84.17% of the variance in car price predictions. 
+
+Obviously in comparison to the previous method, it was found that within complete cases, the KNN method provided a better model prediction in car prices within the given dataset. 
