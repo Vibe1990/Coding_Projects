@@ -1,2 +1,2 @@
 # Coding_Projects
- Where I put all coding projects
+ Here are a sample of some of the Python + R projects that I've worked on. 
