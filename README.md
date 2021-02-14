@@ -1,3 +1,3 @@
 # Coding_Projects
- A repository of some of the Python + R projects that I've worked on. 
+ A repository serving as a backup for all of the Python + R projects that I've worked on. 
  
