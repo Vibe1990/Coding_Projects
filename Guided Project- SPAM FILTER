@@ -1,0 +1,248 @@
+# STEP 1: Loading in Packages + Read in Data + split data into TRAIN + TEST
+
+library(tidyverse) # For everything else 
+library(caret) # For train-test split
+
+set.seed(1234)
+setwd("~/MyDatasets")
+spam = read.csv("spam.csv")
+
+train_index = createDataPartition(spam$label, p = 0.8, list = FALSE)
+train = spam[train_index,]
+test = spam[-train_index,]
+
+
+
+# STEP 2: SHOW THE BREAKDOWN OF SPAM VS. HAM
+
+spam %>% 
+  group_by(label) %>%
+  summarize(percentage = (n()/nrow(spam))*100)%>% 
+  ggplot(aes(x = label, y = percentage, fill = label)) +
+  geom_bar(stat = 'identity', color = 'black') + 
+  theme_classic() +
+  labs(
+    x = "Label", y = "Percentage", title = "Breakdown of SPAM vs. HAM in Data"
+  ) +
+  theme(
+    legend.position = 'none', axis.line = element_line(color = 'black'),
+    axis.text = element_text(color = 'black', size = 12), axis.title = element_text(color = 'black', size = 12)
+  )
+
+train %>% 
+  group_by(label) %>%
+  summarize(percentage = (n()/nrow(train))*100)%>% 
+  ggplot(aes(x = label, y = percentage, fill = label)) +
+  geom_bar(stat = 'identity', color = 'black') + 
+  theme_classic() +
+  labs(
+    x = "Label", y = "Percentage", title = "Breakdown of SPAM vs. HAM in Train Data"
+  ) +
+  theme(
+    legend.position = 'none', axis.line = element_line(color = 'black'),
+    axis.text = element_text(color = 'black', size = 12), axis.title = element_text(color = 'black', size = 12)
+  )
+
+test %>% 
+  group_by(label) %>%
+  summarize(percentage = (n()/nrow(test))*100)%>% 
+  ggplot(aes(x = label, y = percentage, fill = label)) +
+  geom_bar(stat = 'identity', color = 'black') + 
+  theme_classic() +
+  labs(
+    x = "Label",y = "Percentage", title = "Breakdown of SPAM vs. HAM in Test Data"
+  ) + 
+  theme(
+    legend.position = 'none', axis.line = element_line(color = 'black'),
+    axis.text = element_text(color = 'black', size = 12), axis.title = element_text(color = 'black', size = 12)
+  )
+
+
+# STEP 3: Clean the message 
+
+# FUNCTION TO BE USED TO CLEAN SMS 
+
+clean_sms= function(sms){
+  clean_sms = str_to_lower(sms) %>%
+    str_replace_all("[^A-Za-z0-9 ]", ' ') %>%
+    str_replace_all("[:digit:]",'') %>% 
+    str_squish()
+  
+  return(clean_sms)
+}
+
+
+# STEP 4: CREATE A VOCABULARY
+
+clean_messages = map_chr(spam$sms, clean_sms)
+
+vocabulary = clean_messages %>% 
+  str_split(" ") %>% 
+  unlist() %>% 
+  unique()
+
+vocabulary
+
+
+# STEP 5: Calculating Constants
+
+n_vocabulary = length(vocabulary)
+
+train_spam = spam %>% filter(label == 'spam')
+train_ham = spam %>% filter(label == 'ham')
+
+spam_messages = map(train_spam$sms, clean_sms)
+ham_messages = map(train_ham$sms, clean_sms)
+
+spam_vocabulary = unlist(spam_messages) %>% str_split(" ") %>% unlist() %>% unique()
+ham_vocabulary = unlist(ham_messages) %>% str_split(" ") %>% unlist() %>% unique()
+
+n_spam = length(spam_vocabulary)
+n_ham = length(ham_vocabulary)
+
+
+# STEP 6: Calculate probability of SPAM vs. HAM
+
+p_spam = mean(train$label == "spam")
+p_ham = mean(train$label == "ham")
+
+
+
+# STEP 7: Conditional Probabilities of each word in the training data set 
+
+spam_word_count = tibble(
+  word = spam_vocabulary
+) %>%
+  mutate(
+    spam_count = map_int(word, function(w) {
+      map_int(spam_messages, function(m){
+        (str_split(m, " ")[[1]] == w) %>% sum()
+      }) %>% sum()
+    })
+  )
+
+
+ham_word_count = tibble(
+  word = ham_vocabulary
+) %>%
+  mutate(
+    ham_count = map_int(word, function(w) {
+      map_int(ham_messages, function(m){
+        (str_split(m, " ")[[1]] == w) %>% sum()
+      }) %>% sum()
+    })
+  )
+
+
+counts = full_join(spam_word_count, 
+                   ham_word_count,
+                   by = 'word') %>% 
+  mutate(
+    spam_count = ifelse(is.na(spam_count), 0, spam_count),
+    ham_count = ifelse(is.na(ham_count), 0, ham_count)
+  )
+
+
+# STEP 8: Create a function for classification
+
+sample_sentence = train$sms[17]
+
+classify = function(string, alpha = 1){
+  
+  # CREATE A WAY TO CLEAN UP THE STRING TO LOWERCASE + RMV DIGIT + PUNCTUATIONS + WHITESPACE
+  clean_string = str_to_lower(string) %>% str_replace_all("[^A-Za-z0-9 ]", " ") %>% str_replace_all("[:digit:]", '') %>% str_squish()
+  
+  # Split the individual string into words 
+  words = str_split(clean_string, " ")[[1]]
+  
+  # DEALING WITH WORDS NOT PRESENT IN TRAINING DATA
+  new_words = setdiff(vocabulary, words)
+  
+  new_word_probs = tibble(
+    word = new_words,
+    spam_prob = 1,
+    ham_prob = 1
+  )
+  
+  # Find out the present word probability from both the counts data 
+  
+  present_probs <- counts %>% 
+    filter(word %in% words) %>% 
+    mutate(
+      # Calculate the probabilities from the counts
+      spam_prob = (spam_count + alpha) / (n_spam + alpha * n_vocabulary),
+      ham_prob = (ham_count + alpha) / (n_ham + alpha * n_vocabulary)
+    ) %>% 
+    bind_rows(new_word_probs) %>% 
+    pivot_longer(
+      cols = c("spam_prob", "ham_prob"),
+      names_to = "label",
+      values_to = "prob"
+    ) %>% 
+    group_by(label) %>% 
+    summarize(
+      wi_prob = prod(prob) # prod is like sum, but with multiplication
+    )
+ 
+  # Calculate the conditional probabilities
+  p_spam_given_message <- p_spam * (present_probs %>% filter(label == "spam_prob") %>% pull(wi_prob))
+  p_ham_given_message <- p_ham * (present_probs %>% filter(label == "ham_prob") %>% pull(wi_prob))
+  
+  # Classify the message based on the probability
+  ifelse(p_spam_given_message >= p_ham_given_message, "spam", "ham")
+  
+}
+
+final_train = train %>% 
+  mutate(prediction = map_chr(sms, function(m) {classify(m)}))
+
+
+
+# STEP 9: Calculate the accuracy as is
+
+confusion_matrix = table(final_train$label, final_train$prediction)
+
+accuracy = (confusion_matrix[1,1] + confusion_matrix[2,2])/nrow(final_train)
+
+accuracy
+
+
+# STEP 10: Hyperparameter Tuning
+
+alpha_grid = seq(0, 1, by = 0.05)
+cv_accuracy = NULL
+
+for (alpha in alpha_grid) {
+  cv_probs = counts %>% 
+    mutate(
+      spam_prob = (spam_count + alpha) / (n_spam + alpha*n_vocabulary),
+      ham_prob = (ham_count + alpha) / (n_ham + alpha*n_vocabulary)
+    )
+  
+  cv = test %>% 
+    mutate(
+      prediction = map_chr(sms, function(m){classify(m, alpha = alpha)})
+    )
+  
+  confusion = table(cv$label, cv$prediction)
+  accuracy = (confusion[1,1] + confusion[2,2])/nrow(cv)
+  cv_accuracy = c(cv_accuracy, accuracy)
+}
+
+tibble(
+  alpha = alpha_grid,
+  accuracy = cv_accuracy
+) # Accuracy decreases as alpha increase with the best accuracy coming from 0..however since that isn't going to work, we'll go with 0.2
+
+
+test_accuracy = test %>% 
+  mutate(
+    prediction = map_chr(sms, function(m) {classify(m, alpha = 0.2)})
+  )
+
+
+confusion_matrix_test = table(test_accuracy$label, test_accuracy$prediction)
+test_accuracy = (confusion_matrix_test[1,1] + confusion_matrix_test[2,2])/nrow(test_accuracy)
+test_accuracy
+
+# Accuracy is 98.5%, which is pretty good 
